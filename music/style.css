@@ -1,0 +1,421 @@
+:root {
+  --ink: #111114;
+  --soft: rgba(17, 17, 20, 0.52);
+  --faint: rgba(17, 17, 20, 0.08);
+  --paper: #ffffff;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --top: max(18px, env(safe-area-inset-top));
+  --left: max(18px, env(safe-area-inset-left));
+  --right: max(18px, env(safe-area-inset-right));
+  --bottom: max(24px, env(safe-area-inset-bottom));
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.mx {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--paper);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* --- the stage ------------------------------------------------------------------------------ */
+
+.mx-stage {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+}
+
+.mx-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.8s ease;
+}
+
+.mx[data-ready] .mx-canvas {
+  opacity: 1;
+}
+
+/* no WebGL: the cover, flat */
+.mx-flat {
+  position: absolute;
+  left: 50%;
+  top: calc(50% - 30px);
+  width: min(62vw, 46vh, 420px);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border-radius: 4px;
+  box-shadow: 0 30px 60px -30px rgba(17, 17, 20, 0.45), 0 0 0 1px var(--faint);
+}
+
+.mx-fail {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  margin: 0;
+  max-width: 80vw;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--soft);
+}
+
+/* --- corners -------------------------------------------------------------------------------- */
+
+.mx-corner,
+.mx-info {
+  position: absolute;
+  top: var(--top);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  transition: opacity 0.6s ease 0.2s;
+}
+
+.mx:not([data-ready]) :is(.mx-corner, .mx-info, .mx-hint) {
+  opacity: 0;
+}
+
+.mx-corner {
+  left: var(--left);
+  align-items: flex-start;
+}
+
+.mx-tag,
+.mx-meta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--soft);
+}
+
+.mx-name {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--ink);
+  text-decoration: none;
+  transition: opacity 0.25s ease;
+}
+
+.mx-name:hover {
+  opacity: 0.65;
+}
+
+.mx-info {
+  right: var(--right);
+  align-items: flex-end;
+  text-align: right;
+  max-width: min(46vw, 360px);
+}
+
+.mx-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.mx-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 12px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.mx-links a {
+  color: var(--soft);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.mx-links a:hover {
+  color: var(--ink);
+}
+
+.mx-links a::after {
+  content: " ↗";
+  font-size: 10px;
+}
+
+/* swapping releases: the words fade through */
+.mx-info[data-swap] :is(.mx-meta, .mx-title, .mx-links) {
+  opacity: 0;
+  transform: translateY(-3px);
+}
+
+.mx-info :is(.mx-meta, .mx-title, .mx-links) {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+:is(.mx-name, .mx-links a):focus-visible,
+:is(.mx-thumb, .mx-tool):focus-visible {
+  outline: 1px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* --- the dock ------------------------------------------------------------------------------- */
+
+.mx-hint {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--bottom) + 84px);
+  transform: translateX(-50%);
+  margin: 0;
+  white-space: nowrap;
+  pointer-events: none;
+  font-size: 11.5px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: rgba(17, 17, 20, 0.42);
+  transition: opacity 0.8s ease 0.6s;
+}
+
+.mx-dock {
+  position: absolute;
+  left: 50%;
+  bottom: var(--bottom);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100vw - 24px);
+  padding: 7px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--faint);
+  box-shadow: 0 10px 30px -12px rgba(17, 17, 20, 0.18);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  transform: translateX(-50%);
+  transition: opacity 0.8s ease 0.2s, transform 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.2s;
+}
+
+.mx:not([data-ready]) .mx-dock {
+  opacity: 0;
+  transform: translate(-50%, 12px);
+}
+
+.mx-rail {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  padding-block: 10px;
+  margin-block: -10px;
+}
+
+.mx-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.mx-thumb {
+  position: relative;
+  flex: none;
+  width: 52px;
+  height: 52px;
+  padding: 6px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.3s ease;
+}
+
+.mx-thumb:hover {
+  background: rgba(17, 17, 20, 0.04);
+}
+
+.mx-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0.55;
+  filter: saturate(0.35) drop-shadow(0 2px 3px rgba(17, 17, 20, 0.18));
+  transform: rotate(var(--tilt, 0deg)) scale(0.84);
+  transition: opacity 0.35s ease, filter 0.35s ease, transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.mx-thumb:hover img {
+  opacity: 0.85;
+  filter: saturate(0.8) drop-shadow(0 4px 6px rgba(17, 17, 20, 0.22));
+  transform: rotate(0deg) scale(0.94) translateY(-2px);
+}
+
+.mx-thumb[aria-current="true"] img {
+  opacity: 1;
+  filter: saturate(1) drop-shadow(0 6px 10px rgba(17, 17, 20, 0.28));
+  transform: rotate(0deg) scale(1.02) translateY(-3px);
+}
+
+/* under the current release: how long until the next one, or how far the preview has got */
+.mx-bar {
+  position: absolute;
+  left: 28%;
+  right: 28%;
+  bottom: 1px;
+  height: 2px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: rgba(17, 17, 20, 0.1);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.mx-thumb[aria-current="true"][data-progress] .mx-bar {
+  opacity: 1;
+}
+
+.mx-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--ink);
+  transform-origin: left;
+  transform: scaleX(var(--p, 0));
+}
+
+.mx-divider {
+  flex: none;
+  align-self: stretch;
+  width: 1px;
+  margin: 8px 2px;
+  background: var(--faint);
+}
+
+.mx-tool {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 0.25s ease, color 0.25s ease, opacity 0.25s ease;
+}
+
+.mx-tool:hover {
+  background: rgba(17, 17, 20, 0.05);
+}
+
+.mx-tool[aria-pressed="true"] {
+  background: var(--ink);
+  color: #fff;
+}
+
+.mx-tool[aria-disabled="true"] {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.mx-tool[aria-disabled="true"]:hover {
+  background: transparent;
+}
+
+.mx-tool .mx-pause,
+.mx-tool[aria-pressed="true"] .mx-play {
+  display: none;
+}
+
+.mx-tool[aria-pressed="true"] .mx-pause {
+  display: block;
+}
+
+@media (max-width: 720px) {
+  .mx-dock,
+  .mx-rail {
+    gap: 2px;
+  }
+
+  .mx-dock {
+    padding: 5px;
+    bottom: max(16px, env(safe-area-inset-bottom));
+  }
+
+  .mx-rail {
+    padding-inline: 10px;
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 12px, #000 calc(100% - 12px), transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 12px, #000 calc(100% - 12px), transparent);
+  }
+
+  .mx-thumb {
+    width: 42px;
+    height: 42px;
+    padding: 4px;
+  }
+
+  .mx-tool {
+    width: 38px;
+    height: 38px;
+  }
+
+  .mx-hint {
+    bottom: calc(max(16px, env(safe-area-inset-bottom)) + 66px);
+    font-size: 11px;
+  }
+
+  .mx-name,
+  .mx-title {
+    font-size: 16px;
+  }
+
+  .mx-info {
+    max-width: 52vw;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
+}
