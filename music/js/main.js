@@ -31,7 +31,8 @@ boot();
 async function boot() {
   let tracks = [];
   try {
-    tracks = await loadTracks();
+    // on a device with the upload password, skip the CDN's copy: changes show up straight away
+    tracks = await loadTracks({ fresh: Boolean(savedKey()) });
   } catch (err) {
     console.info(`No music library (${err.message}) The page needs the API on Vercel; see the README.`);
   }

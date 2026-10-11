@@ -14,8 +14,9 @@ export async function GET() {
     const { tracks } = await readTracks();
     return Response.json(
       { tracks },
-      // the page asks with ?fresh=… right after a change, which skips this cache
-      { headers: { 'cache-control': 'public, max-age=0, s-maxage=30, stale-while-revalidate=300' } },
+      // visitors get the CDN's copy (at most about a minute old); the owner's page asks with
+      // ?fresh=…, which skips it
+      { headers: { 'cache-control': 'public, max-age=0, s-maxage=30, stale-while-revalidate=30' } },
     );
   } catch (err) {
     return failed(err);

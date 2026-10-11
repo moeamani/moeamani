@@ -1,6 +1,6 @@
 # moeamani
 
-Personal portfolio site, hosted on Vercel. The pages are plain HTML, CSS and JavaScript with no build step. A small API keeps the music in Vercel Blob storage.
+Personal portfolio site, live at **https://moeamani.vercel.app** (music at `/music/`). The pages are plain HTML, CSS and JavaScript with no build step. A small API keeps the music in Vercel Blob storage. Every push to the repo's default branch deploys to production.
 
 - `index.html`: home page (a placeholder for now; links to Music)
 - `music/`: the music page. Every song is a disc in its own clear CD case. You can open the case, turn it round, and play the song right there on the page.
@@ -28,15 +28,16 @@ Drop in your songs (MP3, M4A/AAC/ALAC, FLAC, Ogg/Opus or WAV). Each file's own t
 
 A song without embedded artwork gets a cover drawn from its title. "Lock this device" makes the browser forget the password.
 
-## Set up on Vercel (once)
+## How it's set up on Vercel
 
-1. **Import the repo.** In Vercel, go to New Project and import `moeamani/moeamani`. Use the framework preset **Other**, with no build command and no output directory.
-2. **Add storage.** Under Storage, create a **Blob** store with **public** access and connect it to the project.
-3. **Check the token.** The project needs a `BLOB_READ_WRITE_TOKEN` environment variable, so uploads from the browser can be signed. Connecting a store usually adds it. If you only see `BLOB_STORE_ID`, copy the read-write token from the store's settings into a variable with that name.
-4. **Set a password.** Add an environment variable `UPLOAD_PASSWORD` with a long passphrase. That's what the upload panel asks for.
-5. **Redeploy**, then open `/music/#upload`.
+- **Project** `moeamani`, preset **Other**, with no build step. It's linked to this GitHub repo.
+- **Blob store** `moeamani-music` (public), connected to the project. That gave the project its `BLOB_READ_WRITE_TOKEN`.
+- **`UPLOAD_PASSWORD`** is a sensitive variable for production and preview. To change it, edit it in the project's settings, then redeploy.
+- **Deployment Protection** guards previews and per-deployment URLs. The production address is public.
 
-How it's stored: songs go straight from your browser into Blob, so file size isn't capped by the function's request limit. The track list is a small JSON file in the same store, rewritten under a new name on each change so no cache serves an old one. Visitors see changes within about 30 seconds.
+To set it up again from scratch: import the repo with preset Other, create a public Blob store connected to the project (check that `BLOB_READ_WRITE_TOKEN` appears; if only `BLOB_STORE_ID` does, copy the read-write token from the store's settings), add `UPLOAD_PASSWORD`, and redeploy.
+
+How it's stored: songs go straight from your browser into Blob, so file size isn't capped by the function's request limit. The track list is a small JSON file in the same store, rewritten under a new name on each change so no cache serves an old one. On a device where you've entered the password, changes show up right away. Visitors see them within about a minute.
 
 ## Run it locally
 
