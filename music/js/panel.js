@@ -277,10 +277,11 @@ class Panel {
           { file: item.file, title: item.title.trim() || item.tags.title, artist: item.tags.artist || this.ctx.artist, album: item.tags.album, year: item.tags.year, duration: item.duration, artwork: item.artwork },
           this.key,
           (p) => {
-            item.progress = p;
+            // null: the upload went out whole, so there's no running count
+            item.progress = p ?? item.progress;
             const status = item.row?.querySelector('.mx-status');
-            if (status) status.textContent = `Uploading ${Math.round(p * 100)}%`;
-            item.row?.querySelector('.mx-progress')?.style.setProperty('--p', p);
+            if (status) status.textContent = p === null ? 'Uploading…' : `Uploading ${Math.round(p * 100)}%`;
+            item.row?.querySelector('.mx-progress')?.style.setProperty('--p', item.progress);
           },
         );
         item.status = 'done';

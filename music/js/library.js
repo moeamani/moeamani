@@ -110,12 +110,13 @@ export async function publish(song, key, onProgress = () => {}) {
   let audio;
   let cover = null;
   try {
-    audio = await upload(`library/${id}/audio.${ext}`, song.file, {
-      ...options,
-      contentType: audioType(song.file),
-      multipart: song.file.size > 16 * 1024 * 1024,
-      onUploadProgress: (e) => onProgress((e.percentage / 100) * share),
-    });
+    audio = await sendWithProgress(
+      upload,
+      `library/${id}/audio.${ext}`,
+      song.file,
+      { ...options, contentType: audioType(song.file), multipart: song.file.size > 16 * 1024 * 1024 },
+      (p) => onProgress(p === null ? null : p * share),
+    );
     if (song.artwork) {
       cover = await upload(`library/${id}/cover.jpg`, song.artwork, { ...options, contentType: 'image/jpeg' });
     }
@@ -136,6 +137,31 @@ export async function publish(song, key, onProgress = () => {}) {
     },
   });
   return data.tracks;
+}
+
+// To report progress the upload helper streams the file, which Chrome only does over HTTP/2;
+// behind a proxy that only speaks HTTP/1.1 it fails over and over. If nothing has moved after a
+// few seconds, stop and send the file whole instead (progress then reads null: unknown).
+async function sendWithProgress(upload, pathname, body, options, onProgress) {
+  const stop = new AbortController();
+  let moved = false;
+  const watchdog = setTimeout(() => moved || stop.abort(), 8000);
+  try {
+    return await upload(pathname, body, {
+      ...options,
+      abortSignal: stop.signal,
+      onUploadProgress: (e) => {
+        if (e.loaded > 0) moved = true;
+        onProgress(e.percentage / 100);
+      },
+    });
+  } catch (err) {
+    if (moved || !stop.signal.aborted) throw err;
+    onProgress(null);
+    return upload(pathname, body, options);
+  } finally {
+    clearTimeout(watchdog);
+  }
 }
 
 // The upload helper only says it couldn't get a token; ask the server why.
