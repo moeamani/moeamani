@@ -21,6 +21,7 @@ const fragment = /* glsl */ `
   uniform vec3 uTint;      // the colour it takes on where it's thick
   uniform float uDensity;  // how much it absorbs, per millimetre
   uniform float uOpacity;
+  uniform float uChrome;   // thick plastic mirrors the room even face on, like chrome
 
   varying vec3 vViewPos;
   varying vec3 vNormal;
@@ -44,23 +45,23 @@ const fragment = /* glsl */ `
 
     vec3 room = studio(reflect(-V, N));
     // the room shows at a slant; face on, only the bright lights do
-    vec3 mirror = room * slant + max(room - vec3(0.8), 0.0) * 0.075;
+    float shine = max(slant, uChrome);
+    vec3 mirror = room * shine + max(room - vec3(0.8), 0.0) * 0.075;
 
     // what it absorbs on the way through, more at a slant where the path is longer
     float cosT = sqrt(1.0 - (1.0 - cosv * cosv) / 2.25);
     float absorbed = 1.0 - exp(-uDensity * 1.4 / max(cosT, 0.2));
 
-    float takes = clamp(slant * 0.92 + 0.012 + absorbed, 0.0, 1.0) * uOpacity;
+    float takes = clamp(shine * 0.92 + 0.004 + absorbed, 0.0, 1.0) * uOpacity;
     vec3 col = (mirror + uTint * absorbed) * uOpacity;
 
-    gl_FragColor = vec4(col, 1.0);
-    #include <tonemapping_fragment>
-    #include <colorspace_fragment>
-    gl_FragColor.a = takes;
+    // Written as is, not converted to sRGB: this is light added over what's already on screen,
+    // and converting would lift every faint reflection into a haze across the whole case.
+    gl_FragColor = vec4(col, takes);
   }
 `;
 
-export function plasticMaterial({ tint = [0.9, 0.93, 0.96], density = 0.006 } = {}) {
+export function plasticMaterial({ tint = [0.9, 0.93, 0.96], density = 0.006, chrome = 0 } = {}) {
   return new THREE.ShaderMaterial({
     vertexShader: vertex,
     fragmentShader: fragment,
@@ -69,6 +70,7 @@ export function plasticMaterial({ tint = [0.9, 0.93, 0.96], density = 0.006 } = 
       uTint: { value: new THREE.Color(...tint) },
       uDensity: { value: density },
       uOpacity: { value: 1 },
+      uChrome: { value: chrome },
     },
     transparent: true,
     depthWrite: false,

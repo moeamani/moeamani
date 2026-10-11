@@ -1,0 +1,12 @@
+{
+  "name": "moeamani",
+  "private": true,
+  "type": "module",
+  "description": "Portfolio site: static pages plus a small API on Vercel that keeps the music library in Vercel Blob.",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@vercel/blob": "2.8.0"
+  }
+}

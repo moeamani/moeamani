@@ -1,42 +1,53 @@
 # moeamani
 
-Personal portfolio site. Plain HTML, CSS and JavaScript with no build step.
+Personal portfolio site, hosted on Vercel. The pages are plain HTML, CSS and JavaScript with no build step. A small API keeps the music in Vercel Blob storage.
 
 - `index.html`: home page (a placeholder for now; links to Music)
-- `music/`: the music page. Each release sits in its own 3D CD jewel case. You can open it, turn it round to see the back and spine, and play a preview.
+- `music/`: the music page. Every song is a disc in its own clear CD case. You can open the case, turn it round, and play the song right there on the page.
+- `api/`: the music library. It lists the songs for visitors and handles uploads, which need a password.
 
 ## The music page
 
-Everything on it comes from [`music/js/releases.js`](music/js/releases.js). The four releases in there are placeholders, so replace them with your own:
+Visitors see each song's artwork printed on a disc, with its title, album and year. They can play songs in order, one after another, without leaving the page.
 
-| Field | What it does |
-| --- | --- |
-| `title`, `type`, `year` | Shown top right, on the disc, the spine and the back |
-| `tracks` | `[name, length]` pairs, printed in the booklet and on the back |
-| `cover` | Square image in `music/covers/` (1000px or more). Without one, a cover is generated from `palette` and `art` |
-| `audio` | Short preview in `music/audio/` (mp3/m4a/ogg). Without one, the play button is disabled |
-| `disc` | `silver`, `black` or `gold` |
-| `print` | `label` (title in ink on a bare disc), `ring` (cover round the hole) or `picture` (cover on the whole disc) |
-| `tray` | `black`, `clear`, `smoke` or `rose` |
-| `links` | `spotify`, `apple`, `youtube`, `soundcloud`, `bandcamp`, `tidal`, `deezer`. The placeholders only search for the artist name |
+Controls:
+- Click or tap the case to open it, and drag to turn it.
+- Use the dock to switch songs.
+- The turning-disc button stops all movement.
+- Keys: ←/→ switch songs, O opens the case, S stops movement, P or Space plays.
 
-Controls: click or tap the case to open it, drag to turn it, use the dock to switch releases. Keys: ←/→ switch, O open, S spin, P or Space play. Until someone interacts, the page cycles through the releases on its own. With "reduce motion" set, it stays still.
+Until someone interacts, the page cycles through the songs on its own. With "reduce motion" set, it starts out still. Without WebGL, it shows the artwork flat.
 
-Without WebGL, the page falls back to flat covers.
+The name in the corner comes from [`music/js/config.js`](music/js/config.js).
+
+## Adding music
+
+Open **`/music/#upload`** on the live site and enter the upload password. After that, that browser also shows a Library button in the dock.
+
+Drop in your songs (MP3, M4A/AAC/ALAC, FLAC, Ogg/Opus or WAV). Each file's own tags supply the title, album, year and artwork, read in your browser before anything uploads. Check the titles, then publish. In the same panel you can reorder, rename and delete songs. Deleting a song also deletes its files.
+
+A song without embedded artwork gets a cover drawn from its title. "Lock this device" makes the browser forget the password.
+
+## Set up on Vercel (once)
+
+1. **Import the repo.** In Vercel, go to New Project and import `moeamani/moeamani`. Use the framework preset **Other**, with no build command and no output directory.
+2. **Add storage.** Under Storage, create a **Blob** store with **public** access and connect it to the project.
+3. **Check the token.** The project needs a `BLOB_READ_WRITE_TOKEN` environment variable, so uploads from the browser can be signed. Connecting a store usually adds it. If you only see `BLOB_STORE_ID`, copy the read-write token from the store's settings into a variable with that name.
+4. **Set a password.** Add an environment variable `UPLOAD_PASSWORD` with a long passphrase. That's what the upload panel asks for.
+5. **Redeploy**, then open `/music/#upload`.
+
+How it's stored: songs go straight from your browser into Blob, so file size isn't capped by the function's request limit. The track list is a small JSON file in the same store, rewritten under a new name on each change so no cache serves an old one. Visitors see changes within about 30 seconds.
 
 ## Run it locally
 
-ES modules don't load from `file://`, so serve the folder:
-
 ```sh
-python3 -m http.server 8000
-# then open http://localhost:8000/music/
+npm install
+npx vercel link && npx vercel env pull   # the Blob token and password from the project
+npx vercel dev                           # then open http://localhost:3000/music/
 ```
 
-## Deploy
-
-Any static host works: GitHub Pages (Settings → Pages → deploy from `main`), Vercel or Netlify. All paths are relative, so it also works from a sub-path. three.js loads from jsDelivr, pinned to 0.170.0.
+A plain static server (`python3 -m http.server`) shows the page too, but with no API it has no songs.
 
 ## Credit
 
-The CD case idea comes from Ann Nguyen's [CD Case](https://www.bubbbly.com/cd-case). This is a separate implementation, built for showing releases.
+The CD case idea comes from Ann Nguyen's [CD Case](https://www.bubbbly.com/cd-case). This is a separate implementation, built for playing music.

@@ -4,15 +4,19 @@ import { studioEnvironment } from './studio.js';
 
 const FOV = 24;
 const OPEN = THREE.MathUtils.degToRad(176); // a lid lies back a little short of flat
-const REST_YAW = 0.14;
+const REST_YAW = 0.12;
 const REST_PITCH = -0.1;
+const REST_ROLL = -0.035;
+const SPIN = 1.1; // radians a second: the disc turns slowly
+const SPACING = H + 22; // between cases as they slide past each other
 const DRAG_YAW = 0.0085; // radians per pixel
 const DRAG_PITCH = 0.006;
 
 const clamp = (v, a, b) => Math.min(Math.max(v, a), b);
 const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
-// The 3D scene: one jewel case, turned by dragging, opened by tapping.
+// The 3D scene: a jewel case, turned by dragging, opened by tapping. Moving to another song slides
+// the next case in from above (or below, going back) while this one slides away.
 export class Stage {
   constructor(container, { reducedMotion = false } = {}) {
     this.container = container;
@@ -22,7 +26,8 @@ export class Stage {
     this.onFrame = null; // (dt) once a frame
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    renderer.setPixelRatio(pixelRatio);
     renderer.setClearColor(0xffffff, 1);
     renderer.toneMapping = THREE.NeutralToneMapping;
     renderer.shadowMap.enabled = true;
@@ -38,34 +43,33 @@ export class Stage {
     this.camera = new THREE.PerspectiveCamera(FOV, 1, 10, 6000);
 
     // a white wall a little behind the case, to catch its shadow
-    const wall = new THREE.Mesh(new THREE.PlaneGeometry(6000, 6000), new THREE.ShadowMaterial({ opacity: 0.1 }));
+    const wall = new THREE.Mesh(new THREE.PlaneGeometry(6000, 6000), new THREE.ShadowMaterial({ opacity: 0.09 }));
     wall.position.z = -42;
     wall.receiveShadow = true;
     scene.add(wall);
-    const sun = new THREE.DirectionalLight(0xffffff, 2.1);
+    const sun = new THREE.DirectionalLight(0xffffff, 1.2);
     sun.position.set(-0.32, 0.45, 1).multiplyScalar(700);
     sun.castShadow = true;
     sun.shadow.mapSize.set(1024, 1024);
-    Object.assign(sun.shadow.camera, { left: -280, right: 280, top: 280, bottom: -280, near: 200, far: 1500 });
+    Object.assign(sun.shadow.camera, { left: -300, right: 300, top: 300, bottom: -300, near: 200, far: 1500 });
     sun.shadow.radius = 16;
     sun.shadow.blurSamples = 20;
     sun.shadow.bias = -0.0004;
     scene.add(sun, sun.target);
 
     // turn: spun by dragging; frame: slid over as the lid opens, so the open case stays centred
-    this.case = new JewelCase();
     this.turn = new THREE.Group();
     this.frame = new THREE.Group();
     this.turn.add(this.frame);
-    this.frame.add(this.case.group);
     scene.add(this.turn);
+    this.cases = [new JewelCase(pixelRatio), new JewelCase(pixelRatio)];
+    for (const c of this.cases) this.frame.add(c.group);
+    this.cases[1].group.visible = false;
+    this.current = this.cases[0];
 
     this.state = {
       open: false,
-      lid: 0,
-      lidVel: 0,
-      spin: !reducedMotion,
-      playing: false,
+      still: false,
       spinSpeed: 0,
       disc: 0,
       yaw: REST_YAW,
@@ -74,7 +78,7 @@ export class Stage {
       pitchVel: 0,
       dragging: false,
       idle: 0,
-      flip: null,
+      slide: null,
     };
     this.time = 0;
     this.size = { width: 1, height: 1 };
@@ -108,26 +112,36 @@ export class Stage {
     this.state.open = open;
   }
 
-  setSpin(spin) {
-    this.state.spin = spin;
+  // Stop everything moving on its own: the disc, the drift. Dragging still turns it.
+  setStill(still) {
+    this.state.still = still;
   }
 
-  setPlaying(playing) {
-    this.state.playing = playing;
-  }
-
-  // Put a release in the case. With `flip` the case spins round and the new one is in it by the
-  // time it comes back: once round if it was face on, half round if it was showing its back.
-  dress(release, art, flip = false) {
-    const swap = () => this.case.dress(release, art);
-    if (!flip || this.reducedMotion) {
-      this.state.flip = null;
-      swap();
+  // Put a disc in the case. `direction` 1 slides the next case down from above, -1 brings the
+  // previous one up from below, 0 just swaps it.
+  show(print, direction = 0) {
+    const s = this.state;
+    if (s.slide) this.#endSlide();
+    if (!direction || this.reducedMotion) {
+      this.current.dress(print);
       return;
     }
-    const s = this.state;
-    const back = Math.abs(Math.round((s.yaw - REST_YAW) / Math.PI)) % 2 === 1;
-    s.flip = { t: 0, swap, turn: back ? Math.PI : Math.PI * 2 };
+    const next = this.cases.find((c) => c !== this.current);
+    next.dress(print);
+    next.lidAngle = 0;
+    next.lidVel = 0;
+    next.openAngle = 0;
+    next.group.visible = true;
+    s.slide = { t: 0, dir: direction, from: this.current, to: next };
+    this.current = next;
+  }
+
+  #endSlide() {
+    const { from, to } = this.state.slide;
+    from.group.visible = false;
+    from.group.position.y = 0;
+    to.group.position.y = 0;
+    this.state.slide = null;
   }
 
   #update(dt) {
@@ -135,26 +149,38 @@ export class Stage {
     this.time += dt;
     this.onFrame?.(dt);
 
-    // the lid swings on a spring, past where it stops and back; shut, it bounces off the base
-    const target = s.open ? OPEN : 0;
+    // each lid swings on a spring, past where it stops and back; shut, it bounces off the base
     const k = this.reducedMotion ? 120 : 64;
     const damping = 2 * Math.sqrt(k) * (this.reducedMotion ? 1 : 0.6);
-    s.lidVel += (k * (target - s.lid) - damping * s.lidVel) * dt;
-    s.lid += s.lidVel * dt;
-    if (s.lid < 0) {
-      s.lid = 0;
-      s.lidVel *= -0.25;
+    for (const c of this.cases) {
+      if (!c.group.visible) continue;
+      const target = c === this.current && s.open ? OPEN : 0;
+      c.lidVel += (k * (target - c.lidAngle) - damping * c.lidVel) * dt;
+      c.lidAngle += c.lidVel * dt;
+      if (c.lidAngle < 0) {
+        c.lidAngle = 0;
+        c.lidVel *= -0.25;
+      }
+      c.openAngle = c.lidAngle;
     }
-    this.case.openAngle = s.lid;
-    const spread = Math.max(0, -Math.cos(s.lid)); // 0 shut, 1 lying open
+    const spread = Math.max(0, -Math.cos(this.current.lidAngle)); // 0 shut, 1 lying open
     this.frame.position.x = (W / 2) * spread;
     this.#fit(spread);
 
-    // the disc winds up and down rather than jumping; while a preview plays it always turns
-    const want = s.spin || s.playing ? (s.open ? 2.2 : 1.1) * (s.playing ? 1.6 : 1) : 0;
+    // the disc winds up and down rather than jumping
+    const want = s.still ? 0 : SPIN;
     s.spinSpeed += (want - s.spinSpeed) * (1 - Math.exp(-dt * 1.6));
     s.disc -= s.spinSpeed * dt;
-    this.case.discAngle = s.disc;
+    for (const c of this.cases) c.discAngle = s.disc;
+
+    // sliding to another case
+    if (s.slide) {
+      s.slide.t = Math.min(s.slide.t + dt / 0.85, 1);
+      const p = ease(s.slide.t);
+      s.slide.from.group.position.y = -s.slide.dir * SPACING * p;
+      s.slide.to.group.position.y = s.slide.dir * SPACING * (1 - p);
+      if (s.slide.t >= 1) this.#endSlide();
+    }
 
     // let go, it coasts, then settles face on: the front, or the back if it was turned that way
     s.idle = s.dragging ? 0 : s.idle + dt;
@@ -168,32 +194,14 @@ export class Stage {
     }
 
     // and while it's left alone, it drifts a little
-    const sway = this.reducedMotion ? 0 : THREE.MathUtils.smoothstep(s.idle, 0.5, 3);
-    const swayYaw = Math.sin(this.time * 0.5) * 0.06 * sway;
-    const swayPitch = Math.sin(this.time * 0.73 + 1.3) * 0.03 * sway;
+    this.sway ??= 0;
+    const wantSway = this.reducedMotion || s.still ? 0 : THREE.MathUtils.smoothstep(s.idle, 0.5, 3);
+    this.sway += (wantSway - this.sway) * (1 - Math.exp(-dt * 2));
+    this.swayTime = (this.swayTime || 0) + dt * this.sway;
+    const swayYaw = Math.sin(this.swayTime * 0.5) * 0.06 * this.sway;
+    const swayPitch = Math.sin(this.swayTime * 0.73 + 1.3) * 0.03 * this.sway;
 
-    let flipYaw = 0;
-    let dip = 1;
-    if (s.flip) {
-      s.flip.t = Math.min(s.flip.t + dt / 0.95, 1);
-      const p = ease(s.flip.t);
-      flipYaw = p * s.flip.turn;
-      dip = 1 - 0.07 * Math.sin(Math.PI * p);
-      if (!s.flip.swapped && flipYaw >= Math.PI / 2) {
-        s.flip.swapped = true;
-        s.flip.swap();
-      }
-      if (s.flip.t >= 1) {
-        if (!s.flip.swapped) s.flip.swap();
-        s.yaw += s.flip.turn;
-        s.yawVel = 0;
-        s.flip = null;
-        flipYaw = 0;
-      }
-    }
-
-    this.turn.rotation.set(s.pitch + swayPitch, s.yaw + swayYaw + flipYaw, 0);
-    this.turn.scale.setScalar(dip);
+    this.turn.rotation.set(s.pitch + swayPitch, s.yaw + swayYaw, REST_ROLL);
   }
 
   // Frame the case in the space the page leaves it: below the corner text, above the dock.
@@ -229,7 +237,7 @@ export class Stage {
     const ndc = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     const ray = new THREE.Raycaster();
     ray.setFromCamera(ndc, this.camera);
-    return ray.intersectObject(this.case.group, true).length > 0;
+    return ray.intersectObject(this.current.group, true).some((hit) => hit.object.isMesh);
   }
 
   #pointer() {

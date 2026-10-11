@@ -1,14 +1,19 @@
 import * as THREE from 'three';
 import { discMaterial, setDisc } from './disc-material.js';
 import { plasticMaterial } from './plastic-material.js';
+import { sparkleGeometry, sparkleMaterial } from './sparkles.js';
 
-// A standard jewel case, in millimetres: 142 wide, 125 tall, 10.4 deep, centred on the origin.
+// A clear jewel case, in millimetres: 142 wide, 125 tall, 10.4 deep, centred on the origin.
+// Nothing printed in it, only plastic: the walls, the tray's rails and clips, the hub, and the disc.
 // Its lid hinges on the left edge.
 export const W = 142;
 export const H = 125;
 const D = 10.4;
-const HINGE_Z = 2.2;
+const HINGE_Z = 1.9;
 const DISC_Z = -0.7;
+const FLOOR = -3.1; // top of the tray floor
+
+// --- shapes ------------------------------------------------------------------------------
 
 function roundedRect(path, w, h, r, x = 0, y = 0) {
   const l = x - w / 2;
@@ -25,22 +30,57 @@ function roundedRect(path, w, h, r, x = 0, y = 0) {
   return path;
 }
 
-// A rounded slab `t` thick from z = 0 up, its edges softened by a small bevel. With `inner` it's a
-// frame: a wall of that inside size.
-function slab(w, h, r, t, inner = null, bevel = 0.3) {
-  const b = bevel;
-  const shape = roundedRect(new THREE.Shape(), w - 2 * b, h - 2 * b, Math.max(r - b, 0.2));
-  if (inner) shape.holes.push(roundedRect(new THREE.Path(), inner[0] + 2 * b, inner[1] + 2 * b, inner[2]));
+// Extrude a shape `t` thick from z = 0 up, with its edges rounded over by `bevel`: the rounding is
+// what catches the room's light and draws each edge as a line of chrome.
+function extrude(shape, t, bevel) {
+  const b = Math.min(bevel, t / 2 - 0.01);
   const g = new THREE.ExtrudeGeometry(shape, {
     depth: Math.max(t - 2 * b, 0.01),
     bevelEnabled: true,
     bevelThickness: b,
     bevelSize: b,
-    bevelSegments: 2,
-    curveSegments: 10,
+    bevelOffset: -b,
+    bevelSegments: 3,
+    curveSegments: 12,
   });
   g.translate(0, 0, b);
   return g;
+}
+
+const slab = (w, h, r, t, bevel = 0.4) => extrude(roundedRect(new THREE.Shape(), w, h, r), t, bevel);
+
+// A rounded-rectangle ring: outer w x h, walls `wall` thick.
+function frame(w, h, r, wall, t, bevel = 0.5) {
+  const shape = roundedRect(new THREE.Shape(), w, h, r);
+  shape.holes.push(roundedRect(new THREE.Path(), w - 2 * wall, h - 2 * wall, Math.max(r - wall, 0.6)));
+  return extrude(shape, t, bevel);
+}
+
+// An L-shaped rail in the top right corner of a box reaching to (X, Y), arms `ax` and `ay` long,
+// `w` wide. sx and sy mirror it into the other corners.
+function rail(X, Y, ax, ay, w, sx, sy) {
+  const r = 3.5;
+  const ri = 1.2;
+  const pts = [
+    [X - ax, Y],
+    [X - r, Y, X, Y, X, Y - r],
+    [X, Y - ay],
+    [X - w, Y - ay],
+    [X - w, Y - w - ri, X - w, Y - w, X - w - ri, Y - w],
+    [X - ax, Y - w],
+  ];
+  const shape = new THREE.Shape();
+  const m = (x, y) => [x * sx, y * sy];
+  shape.moveTo(...m(...pts[0]));
+  for (const p of pts.slice(1)) {
+    if (p.length === 2) shape.lineTo(...m(...p));
+    else {
+      shape.lineTo(...m(p[0], p[1]));
+      shape.quadraticCurveTo(...m(p[2], p[3]), ...m(p[4], p[5]));
+    }
+  }
+  shape.closePath();
+  return extrude(shape, 1.8, 0.85);
 }
 
 function lathe(points, segments = 96) {
@@ -49,138 +89,154 @@ function lathe(points, segments = 96) {
   return g;
 }
 
-const TRAYS = {
-  black: () =>
-    new THREE.MeshPhysicalMaterial({ color: 0x0c0c0e, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.08 }),
-  clear: () => plasticMaterial(),
-  smoke: () => plasticMaterial({ tint: [0.05, 0.05, 0.06], density: 0.22 }),
-  rose: () => plasticMaterial({ tint: [0.95, 0.42, 0.55], density: 0.16 }),
-};
+function ring(radius, tube) {
+  return new THREE.TorusGeometry(radius, tube, 12, Math.max(24, Math.round(radius * 6)));
+}
+
+// --- the parts every case shares -----------------------------------------------------------
+
+let parts = null;
+
+function build() {
+  const z0 = -D / 2;
+  const top = D / 2;
+  const base = [];
+  const lid = [];
+  const add = (list, geometry, kind, x = 0, y = 0, z = 0, rz = 0) => list.push({ geometry, kind, x, y, z, rz });
+
+  // the base: a clear back and the wall round it
+  add(base, slab(W - 0.6, H - 0.6, 3.6, 1.1, 0.45), 'clear', 0, 0, z0);
+  add(base, frame(W - 0.6, H - 0.6, 3.6, 1.9, 7.0, 0.7), 'wall', 0, 0, z0);
+  // the tray floor, and everything moulded on it
+  add(base, slab(W - 4.6, H - 4.6, 1.6, 0.9, 0.3), 'clear', 0, 0, FLOOR - 0.9);
+  // L-shaped rails in the corners, broken where the disc comes close
+  for (const [sx, sy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) add(base, rail(64.6, 55, 31.6, 34, 2.6, sx, sy), 'rail', 0, 0, FLOOR);
+  // two posts under the bottom of the disc
+  for (const sx of [-1, 1]) add(base, slab(2.6, 8.4, 1.1, 1.8, 0.85), 'rail', sx * 41, -51, FLOOR);
+  // the latch on the hinge side: a loop within a loop
+  add(base, frame(18.5, 40, 3.2, 2.2, 1.8, 0.85), 'rail', -59.7, 0, FLOOR);
+  add(base, frame(9, 24, 1.8, 1.7, 1.8, 0.8), 'rail', -60.6, 0, FLOOR);
+  // four clips that hold the disc's edge
+  for (const deg of [60, 120, 240, 300]) {
+    const a = THREE.MathUtils.degToRad(deg);
+    add(base, slab(6.5, 2.4, 0.9, 2.3, 0.5), 'rail', Math.cos(a) * 60.6, Math.sin(a) * 60.6, DISC_Z - 1.2, a);
+  }
+  // the hub: a post through the disc's hole, a ring under the disc, four holes in the floor
+  add(base, lathe([[7.2, FLOOR], [7.2, 0.15], [6.6, 0.6], [0.01, 0.6]]), 'clear');
+  add(base, ring(4.6, 0.45), 'rail', 0, 0, 0.62);
+  add(base, ring(16.0, 0.6), 'rail', 0, 0, DISC_Z - 0.6 - 0.6);
+  for (let k = 0; k < 4; k++) {
+    const a = Math.PI / 4 + (k * Math.PI) / 2;
+    add(base, ring(1.5, 0.42), 'rail', Math.cos(a) * 12.2, Math.sin(a) * 12.2, FLOOR + 0.1);
+  }
+  // hinge knuckles at the top and bottom of the left edge
+  const knuckle = new THREE.CylinderGeometry(1.7, 1.7, 9, 24);
+  for (const sy of [-1, 1]) add(base, knuckle, 'rail', -W / 2 + 0.6, sy * (H / 2 - 6), HINGE_Z);
+
+  // the lid: a clear face and a shallow wall, with tabs that would hold a booklet
+  add(lid, slab(W, H, 3.8, 1.0, 0.45), 'clear', 0, 0, top - 1.0);
+  add(lid, frame(W, H, 3.8, 1.4, top - HINGE_Z - 0.1, 0.55), 'wall', 0, 0, HINGE_Z + 0.1);
+  const tab = new THREE.Shape();
+  tab.moveTo(4.2, 0);
+  tab.absarc(0, 0, 4.2, 0, Math.PI, false);
+  tab.lineTo(4.2, 0);
+  const tabGeo = extrude(tab, 1.0, 0.35);
+  for (const [x, sy] of [[-44, 1], [44, 1], [-44, -1], [44, -1]]) add(lid, tabGeo, 'clear', x, sy * (H / 2 - 1.4), top - 2.1, sy > 0 ? Math.PI : 0);
+
+  // where glints can catch: along the walls' rounded edges, the rails and the disc's rim
+  const rand = mulberry(7);
+  const basePts = [];
+  const lidPts = [];
+  const perimeter = (list, hw, hh, z, step) => {
+    const len = 4 * (hw + hh);
+    for (let d = 0; d < len; d += step * (0.6 + rand() * 0.8)) {
+      let x;
+      let y;
+      let nx = 0;
+      let ny = 0;
+      if (d < 2 * hw) (x = -hw + d), (y = hh), (ny = 1);
+      else if (d < 2 * hw + 2 * hh) (x = hw), (y = hh - (d - 2 * hw)), (nx = 1);
+      else if (d < 4 * hw + 2 * hh) (x = hw - (d - 2 * hw - 2 * hh)), (y = -hh), (ny = -1);
+      else (x = -hw), (y = -hh + (d - 4 * hw - 2 * hh)), (nx = -1);
+      list.push([x, y, z, nx * 0.6, ny * 0.6, 1]);
+    }
+  };
+  perimeter(basePts, (W - 0.6) / 2 - 0.4, (H - 0.6) / 2 - 0.4, z0 + 6.9, 3.2);
+  perimeter(basePts, (W - 0.6) / 2 - 1.7, (H - 0.6) / 2 - 1.7, z0 + 6.9, 4.5);
+  perimeter(lidPts, W / 2 - 0.4, H / 2 - 0.4, top - 0.05, 3.2);
+  for (let i = 0; i < 70; i++) {
+    const a = rand() * Math.PI * 2;
+    basePts.push([Math.cos(a) * 59.6, Math.sin(a) * 59.6, DISC_Z + 0.6, Math.cos(a) * 0.4, Math.sin(a) * 0.4, 1]);
+  }
+  for (const [sx, sy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+    for (let i = 0; i < 9; i++) basePts.push([sx * (33 + rand() * 31), sy * 54, FLOOR + 1.8, 0, sy * 0.5, 1]);
+    for (let i = 0; i < 9; i++) basePts.push([sx * 63.5, sy * (21 + rand() * 33), FLOOR + 1.8, sx * 0.5, 0, 1]);
+  }
+
+  parts = {
+    base,
+    lid,
+    disc: {
+      face: new THREE.RingGeometry(16.5, 60, 160, 1),
+      edge: new THREE.CylinderGeometry(60, 60, 1.2, 160, 1, true).rotateX(Math.PI / 2),
+      middle: lathe([[7.5, -0.6], [16.5, -0.6], [16.5, 0.6], [7.5, 0.6], [7.5, -0.6]]),
+      stacking: ring(15.6, 0.85),
+    },
+    glints: { base: sparkleGeometry(basePts, rand), lid: sparkleGeometry(lidPts, rand) },
+    materials: {
+      clear: plasticMaterial({ tint: [0.86, 0.9, 0.95], density: 0.005 }),
+      // thick plastic seen end on goes grey, like the case's walls and the tray's rails
+      wall: plasticMaterial({ tint: [0.42, 0.44, 0.48], density: 0.08, chrome: 0.3 }),
+      rail: plasticMaterial({ tint: [0.3, 0.32, 0.36], density: 0.07, chrome: 0.5 }),
+      edge: new THREE.MeshStandardMaterial({ color: 0xe6e9ee, metalness: 1, roughness: 0.16, envMapIntensity: 1.5 }),
+      glints: null,
+    },
+  };
+}
 
 export class JewelCase {
-  constructor() {
+  constructor(pixelRatio = 1) {
+    if (!parts) build();
+    parts.materials.glints ||= sparkleMaterial(pixelRatio);
+    const m = parts.materials;
     this.group = new THREE.Group();
-    this.clear = plasticMaterial();
-    this.paper = () => new THREE.MeshStandardMaterial({ roughness: 0.62, metalness: 0, envMapIntensity: 0.95 });
-    this.trays = {};
+    this.lidAngle = 0;
+    this.lidVel = 0;
     this.textures = [];
 
-    this.#buildBase();
-    this.#buildDisc();
-    this.#buildLid();
-
-    this.group.traverse((o) => {
-      if (o.isMesh) o.castShadow = true;
-    });
-  }
-
-  #mesh(geometry, material, parent) {
-    const m = new THREE.Mesh(geometry, material);
-    parent.add(m);
-    return m;
-  }
-
-  #buildBase() {
-    const base = new THREE.Group();
-    this.group.add(base);
-    const z0 = -D / 2;
-
-    // the clear back and the walls round it
-    this.#mesh(slab(W, H, 2.4, 1.1), this.clear, base).position.z = z0;
-    this.#mesh(slab(W - 1, H - 1, 2.2, 7.2, [W - 3.6, H - 3.6, 1]), this.clear, base).position.z = z0;
-
-    // the tray card: its back seen through the case's back, its inside behind a clear tray,
-    // and its two spines folded up inside the side walls
-    const card = new THREE.PlaneGeometry(W - 4, H - 6);
-    this.cardBack = this.#mesh(card, this.paper(), base);
-    this.cardBack.position.z = z0 + 1.2;
-    this.cardBack.rotation.y = Math.PI;
-    this.cardInside = this.#mesh(card, this.paper(), base);
-    this.cardInside.position.z = z0 + 1.25;
-    const spineGeo = new THREE.PlaneGeometry(H - 6, 6.5);
-    this.spines = [-1, 1].map((side) => {
-      const s = this.#mesh(spineGeo, this.paper(), base);
-      s.position.set(side * (W / 2 - 1.9), 0, z0 + 1.2 + 3.25);
-      // face outwards, reading top to bottom
-      s.rotation.set(0, side * Math.PI / 2, -Math.PI / 2);
-      return s;
-    });
-
-    // the tray: a plate with a lip round the disc, ribs in the corners and the hub in the middle
-    this.trayParts = [];
-    const tray = this.#mesh(slab(W - 4.2, H - 4.4, 1.2, 1.6), this.clear, base);
-    tray.position.z = z0 + 1.5;
-    this.trayParts.push(tray);
-    const trayTop = z0 + 3.1;
-    const lip = this.#mesh(lathe([[60.75, 0], [60.75, 0.7], [60.25, 0.7], [60.25, 0]], 128), this.clear, base);
-    lip.position.z = trayTop;
-    this.trayParts.push(lip);
-    const rib = new THREE.BoxGeometry(1.1, 17, 1.4);
-    for (const sx of [-1, 1]) {
-      for (const sy of [-1, 1]) {
-        const v = this.#mesh(rib, this.clear, base);
-        v.position.set(sx * 64.5, sy * 47, trayTop + 0.7);
-        const h = this.#mesh(rib, this.clear, base);
-        h.rotation.z = Math.PI / 2;
-        h.position.set(sx * 56.5, sy * 55, trayTop + 0.7);
-        this.trayParts.push(v, h);
+    const place = (list, parent) => {
+      for (const p of list) {
+        const mesh = new THREE.Mesh(p.geometry, m[p.kind]);
+        mesh.position.set(p.x, p.y, p.z);
+        mesh.rotation.z = p.rz;
+        mesh.castShadow = true;
+        parent.add(mesh);
       }
-    }
-    const hubTop = DISC_Z + 1.4;
-    const hub = this.#mesh(
-      lathe([
-        [16.4, trayTop],
-        [16.4, DISC_Z - 1.0],
-        [15.6, DISC_Z - 0.6],
-        [7.3, DISC_Z - 0.6],
-        [7.3, hubTop - 1.2],
-        [6.4, hubTop - 0.4],
-        [5.4, hubTop],
-        [0.01, hubTop],
-      ]),
-      this.clear,
-      base,
-    );
-    this.trayParts.push(hub);
-    // the teeth that grip the disc
-    const tooth = new THREE.BoxGeometry(2.2, 1.1, hubTop - DISC_Z + 0.4);
-    for (let i = 0; i < 10; i++) {
-      const a = (i / 10) * Math.PI * 2;
-      const t = this.#mesh(tooth, this.clear, base);
-      t.position.set(Math.cos(a) * 5.6, Math.sin(a) * 5.6, (hubTop + DISC_Z) / 2);
-      t.rotation.z = a;
-      this.trayParts.push(t);
-    }
+    };
+    this.base = new THREE.Group();
+    this.group.add(this.base);
+    place(parts.base, this.base);
+    this.base.add(new THREE.Points(parts.glints.base, m.glints));
 
-    // the hinge knuckles at the top and bottom of the left edge
-    const knuckle = new THREE.CylinderGeometry(1.7, 1.7, 9, 24);
-    for (const sy of [-1, 1]) {
-      const k = this.#mesh(knuckle, this.clear, base);
-      k.position.set(-W / 2 + 0.6, sy * (H / 2 - 6), HINGE_Z);
-    }
-  }
-
-  #buildDisc() {
+    // the disc, label side up
     const disc = new THREE.Group();
     disc.position.z = DISC_Z;
     this.group.add(disc);
     this.disc = disc;
-
-    // metal from 16.5mm out; clear plastic inside it, round a 15mm hole
-    const face = new THREE.RingGeometry(16.5, 60, 160, 1);
     this.labelSide = discMaterial(true);
     this.dataSide = discMaterial(false);
-    this.#mesh(face, this.labelSide, disc).position.z = 0.6;
-    const back = this.#mesh(face, this.dataSide, disc);
-    back.position.z = -0.6;
-    back.rotation.y = Math.PI;
-    const edge = new THREE.CylinderGeometry(60, 60, 1.2, 160, 1, true);
-    edge.rotateX(Math.PI / 2);
-    this.#mesh(edge, new THREE.MeshStandardMaterial({ color: 0x9a9da3, metalness: 0.6, roughness: 0.25 }), disc);
-    this.#mesh(lathe([[7.5, -0.6], [16.5, -0.6], [16.5, 0.6], [7.5, 0.6], [7.5, -0.6]], 96), this.clear, disc);
-  }
+    const label = new THREE.Mesh(parts.disc.face, this.labelSide);
+    label.position.z = 0.6;
+    const data = new THREE.Mesh(parts.disc.face, this.dataSide);
+    data.position.z = -0.6;
+    data.rotation.y = Math.PI;
+    const stacking = new THREE.Mesh(parts.disc.stacking, m.rail);
+    stacking.position.z = 0.6;
+    for (const mesh of [label, data, new THREE.Mesh(parts.disc.edge, m.edge), new THREE.Mesh(parts.disc.middle, m.clear), stacking]) {
+      mesh.castShadow = true;
+      disc.add(mesh);
+    }
 
-  #buildLid() {
     // the pivot sits on the hinge line; the lid hangs off it to the right
     this.hinge = new THREE.Group();
     this.hinge.position.set(-W / 2, 0, HINGE_Z);
@@ -188,23 +244,10 @@ export class JewelCase {
     const lid = new THREE.Group();
     lid.position.set(W / 2, 0, -HINGE_Z);
     this.hinge.add(lid);
-    this.lid = lid;
+    place(parts.lid, lid);
+    lid.add(new THREE.Points(parts.glints.lid, m.glints));
 
-    const top = D / 2;
-    this.#mesh(slab(W, H, 2.6, 1.1), this.clear, lid).position.z = top - 1.1;
-    this.#mesh(slab(W, H, 2.6, 2.4, [W - 2.6, H - 2.6, 1.4]), this.clear, lid).position.z = HINGE_Z;
-
-    // the booklet, its cover up against the lid, held by four tabs
-    const page = new THREE.PlaneGeometry(120.5, 120.5);
-    this.cover = this.#mesh(page, this.paper(), lid);
-    this.cover.position.set(0, 0, top - 1.2);
-    this.inside = this.#mesh(page, this.paper(), lid);
-    this.inside.position.set(0, 0, top - 1.35);
-    this.inside.rotation.y = Math.PI;
-    const tab = new THREE.BoxGeometry(7, 2.2, 1.2);
-    for (const [x, y] of [[-50, 60.2], [52, 60.2], [-50, -60.2], [52, -60.2]]) {
-      this.#mesh(tab, this.clear, lid).position.set(x, y, top - 1.95);
-    }
+    this.dress(null);
   }
 
   // The lid's angle in radians: 0 shut, about PI lying open to the left.
@@ -216,40 +259,28 @@ export class JewelCase {
     this.disc.rotation.z = a;
   }
 
-  // Dress the case for a release: textures come from art.js canvases.
-  dress(release, art) {
+  // Print a song's disc. `print` is a canvas from art.js, or null for a bare disc.
+  dress(print) {
     for (const t of this.textures) t.dispose();
     this.textures = [];
-    const made = new Map();
-    const tex = (canvas) => {
-      if (made.has(canvas)) return made.get(canvas);
-      const t = new THREE.CanvasTexture(canvas);
-      t.colorSpace = THREE.SRGBColorSpace;
-      t.anisotropy = 8;
-      this.textures.push(t);
-      made.set(canvas, t);
-      return t;
-    };
-    const paint = (mesh, canvas) => {
-      mesh.material.map = tex(canvas);
-      mesh.material.needsUpdate = true;
-    };
-    paint(this.cover, art.cover);
-    paint(this.inside, art.inside);
-    paint(this.cardBack, art.back);
-    paint(this.cardInside, art.cover);
-    const spine = tex(art.spine);
-    for (const s of this.spines) {
-      s.material.map = spine;
-      s.material.needsUpdate = true;
+    let texture = null;
+    if (print) {
+      texture = new THREE.CanvasTexture(print);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = 8;
+      this.textures.push(texture);
     }
-
-    const print = tex(art.print);
-    setDisc(this.labelSide, release.disc, print);
-    setDisc(this.dataSide, release.disc, null);
-
-    const kind = TRAYS[release.tray] ? release.tray : 'black';
-    this.trays[kind] ||= TRAYS[kind]();
-    for (const part of this.trayParts) part.material = this.trays[kind];
+    setDisc(this.labelSide, 'silver', texture);
+    setDisc(this.dataSide, 'silver', null);
   }
+}
+
+function mulberry(seed) {
+  let a = seed;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }

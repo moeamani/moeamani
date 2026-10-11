@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Music — Moe Amani</title>
-    <meta name="description" content="Music by Moe Amani. Every release in its own CD case: open it, turn it round, play a preview." />
+    <title>Music — M/ODE</title>
+    <meta name="description" content="Music by M/ODE. Every song in its own clear CD case: open it, turn it round, play it." />
     <meta name="theme-color" content="#ffffff" />
     <meta name="color-scheme" content="light" />
     <link rel="stylesheet" href="style.css" />
@@ -21,26 +21,26 @@
 
       <header class="mx-corner">
         <span class="mx-tag">Music</span>
-        <a class="mx-name" href="../">Moe Amani</a>
+        <a class="mx-name" href="../">M/ODE</a>
       </header>
 
       <section class="mx-info" aria-labelledby="mx-title">
         <p class="mx-meta"></p>
         <h2 class="mx-title" id="mx-title"></h2>
-        <ul class="mx-links" aria-label="Listen on"></ul>
-        <ol class="sr-only mx-tracks" aria-label="Tracklist"></ol>
+        <p class="mx-time"></p>
       </section>
 
       <p class="mx-hint" aria-hidden="true">Tap the case to open it · drag to turn it</p>
 
-      <nav class="mx-dock" aria-label="Releases">
+      <nav class="mx-dock" aria-label="Songs">
         <div class="mx-rail"></div>
         <span class="mx-divider" aria-hidden="true"></span>
-        <button type="button" class="mx-tool" data-tool="spin" aria-label="Spin the disc" title="Spin (S)">
-          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6">
+        <button type="button" class="mx-tool" data-tool="still" aria-label="Stop movement" title="Stop movement (S)">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
             <circle cx="12" cy="12" r="8.5" />
             <circle cx="12" cy="12" r="2.2" />
-            <path d="M12 6a6 6 0 0 1 6 6" stroke-linecap="round" />
+            <path class="mx-still-arc" d="M12 6a6 6 0 0 1 6 6" />
+            <path class="mx-still-bar" d="M5.6 18.4 18.4 5.6" />
           </svg>
         </button>
         <button type="button" class="mx-tool" data-tool="open" aria-label="Open the case" title="Open (O)">
@@ -50,7 +50,7 @@
             <circle cx="15.5" cy="12.5" r="2.5" />
           </svg>
         </button>
-        <button type="button" class="mx-tool" data-tool="play" aria-label="Play a preview" title="Play (P)">
+        <button type="button" class="mx-tool" data-tool="play" aria-label="Play" title="Play (P)">
           <svg class="mx-play" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
             <path d="M7.5 4.8v14.4a.8.8 0 0 0 1.2.7l11.3-7.2a.8.8 0 0 0 0-1.4L8.7 4.1a.8.8 0 0 0-1.2.7z" fill="currentColor" />
           </svg>
@@ -58,10 +58,16 @@
             <path d="M6.5 4.5h4v15h-4zM13.5 4.5h4v15h-4z" fill="currentColor" />
           </svg>
         </button>
+        <button type="button" class="mx-tool" data-tool="library" aria-label="Library" title="Library" hidden>
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 15V4.5M7.5 9 12 4.5 16.5 9" />
+            <path d="M4.5 14.5v3a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3" />
+          </svg>
+        </button>
       </nav>
 
       <p class="sr-only" aria-live="polite" id="mx-live"></p>
-      <noscript><p class="mx-fail">This page needs JavaScript to show the releases.</p></noscript>
+      <noscript><p class="mx-fail">This page needs JavaScript to play the music.</p></noscript>
     </main>
   </body>
 </html>

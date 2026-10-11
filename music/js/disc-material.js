@@ -29,6 +29,7 @@ const fragment = /* glsl */ `
   uniform float uMirror;  // how much of the room the metal reflects
   uniform float uSatin;   // its soft, lit sheen
   uniform float uRainbow; // how strongly the track splits the light
+  uniform float uVarnish; // how much of the rainbow shows through the print's gloss
 
   varying vec3 vLocal;
   varying vec3 vViewPos;
@@ -110,6 +111,8 @@ const fragment = /* glsl */ `
         0.15 * max(dot(N, uTop), 0.0);
       col = mix(col, ink.rgb * diffuse, printed);
       col += room * fresnel(cosv, 0.04) * printed * 0.7;
+      // a glossy print still lets a little of the rainbow through
+      col += rainbow * data * printed * uVarnish;
     }
 
     // the last millimetre is bare plastic over the metal's edge
@@ -141,6 +144,7 @@ export function discMaterial(printed) {
       uMirror: { value: METALS.silver.mirror },
       uSatin: { value: METALS.silver.satin },
       uRainbow: { value: METALS.silver.rainbow },
+      uVarnish: { value: 0.22 },
     },
     userData: { printed },
   });
