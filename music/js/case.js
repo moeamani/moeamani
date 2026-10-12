@@ -3,11 +3,12 @@ import { discMaterial, setDisc } from './disc-material.js';
 import { plasticMaterial } from './plastic-material.js';
 import { sparkleGeometry, sparkleMaterial } from './sparkles.js';
 
-// A clear jewel case, in millimetres: 142 wide, 125 tall, 10.4 deep, centred on the origin.
+// A clear jewel case, in millimetres: square, 145 a side and 10.4 deep, centred on the origin, with
+// a hand's width of clear plastic round the 120mm disc.
 // Nothing printed in it, only plastic: the walls, the tray's rails and clips, the hub, and the disc.
 // Its lid hinges on the left edge.
-export const W = 142;
-export const H = 125;
+export const W = 145;
+export const H = 145;
 const D = 10.4;
 const HINGE_Z = 1.9;
 const DISC_Z = -0.7;
@@ -80,7 +81,7 @@ function rail(X, Y, ax, ay, w, sx, sy) {
     }
   }
   shape.closePath();
-  return extrude(shape, 1.8, 0.85);
+  return extrude(shape, 1.8, 0.6);
 }
 
 function lathe(points, segments = 96) {
@@ -106,20 +107,23 @@ function build() {
 
   // the base: a clear back and the wall round it
   add(base, slab(W - 0.6, H - 0.6, 3.6, 1.1, 0.45), 'clear', 0, 0, z0);
-  add(base, frame(W - 0.6, H - 0.6, 3.6, 1.9, 7.0, 0.7), 'wall', 0, 0, z0);
+  add(base, frame(W - 0.6, H - 0.6, 3.6, 1.9, 7.0, 0.4), 'wall', 0, 0, z0);
+  // and a lip just inside it, a step lower: each edge of each wall catches the light as its own line
+  add(base, frame(W - 5.2, H - 5.2, 2.2, 1.1, 5.4, 0.3), 'wall', 0, 0, z0);
   // the tray floor, and everything moulded on it
   add(base, slab(W - 4.6, H - 4.6, 1.6, 0.9, 0.3), 'clear', 0, 0, FLOOR - 0.9);
   // L-shaped rails in the corners, broken where the disc comes close
-  for (const [sx, sy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) add(base, rail(64.6, 55, 31.6, 34, 2.6, sx, sy), 'rail', 0, 0, FLOOR);
+  // (on the hinge side they reach further, to the latch)
+  for (const [sx, sy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) add(base, rail(63.8, 63.8, 28, sx < 0 ? 40 : 28, 3.4, sx, sy), 'rail', 0, 0, FLOOR);
   // two posts under the bottom of the disc
-  for (const sx of [-1, 1]) add(base, slab(2.6, 8.4, 1.1, 1.8, 0.85), 'rail', sx * 41, -51, FLOOR);
+  for (const sx of [-1, 1]) add(base, slab(2.6, 12, 1.1, 1.8, 0.4), 'rail', sx * 39, -55, FLOOR);
   // the latch on the hinge side: a loop within a loop
-  add(base, frame(18.5, 40, 3.2, 2.2, 1.8, 0.85), 'rail', -59.7, 0, FLOOR);
-  add(base, frame(9, 24, 1.8, 1.7, 1.8, 0.8), 'rail', -60.6, 0, FLOOR);
+  add(base, frame(18.5, 40, 3.2, 2.2, 1.8, 0.4), 'rail', -W / 2 + 1.9 + 9.25, 0, FLOOR);
+  add(base, frame(9, 24, 1.8, 1.7, 1.8, 0.4), 'rail', -W / 2 + 1.9 + 8, 0, FLOOR);
   // four clips that hold the disc's edge
   for (const deg of [60, 120, 240, 300]) {
     const a = THREE.MathUtils.degToRad(deg);
-    add(base, slab(6.5, 2.4, 0.9, 2.3, 0.5), 'rail', Math.cos(a) * 60.6, Math.sin(a) * 60.6, DISC_Z - 1.2, a);
+    add(base, slab(6.5, 2.4, 0.9, 2.3, 0.35), 'rail', Math.cos(a) * 60.6, Math.sin(a) * 60.6, DISC_Z - 1.2, a);
   }
   // the hub: a post through the disc's hole, a ring under the disc, four holes in the floor
   add(base, lathe([[7.2, FLOOR], [7.2, 0.15], [6.6, 0.6], [0.01, 0.6]]), 'clear');
@@ -135,7 +139,8 @@ function build() {
 
   // the lid: a clear face and a shallow wall, with tabs that would hold a booklet
   add(lid, slab(W, H, 3.8, 1.0, 0.45), 'clear', 0, 0, top - 1.0);
-  add(lid, frame(W, H, 3.8, 1.4, top - HINGE_Z - 0.1, 0.55), 'wall', 0, 0, HINGE_Z + 0.1);
+  add(lid, frame(W, H, 3.8, 1.4, top - HINGE_Z - 0.1, 0.35), 'wall', 0, 0, HINGE_Z + 0.1);
+  add(lid, frame(W - 4.4, H - 4.4, 2.4, 0.9, 2.0, 0.3), 'wall', 0, 0, top - 1.0 - 2.0);
   const tab = new THREE.Shape();
   tab.moveTo(4.2, 0);
   tab.absarc(0, 0, 4.2, 0, Math.PI, false);
@@ -169,8 +174,8 @@ function build() {
     basePts.push([Math.cos(a) * 59.6, Math.sin(a) * 59.6, DISC_Z + 0.6, Math.cos(a) * 0.4, Math.sin(a) * 0.4, 1]);
   }
   for (const [sx, sy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
-    for (let i = 0; i < 9; i++) basePts.push([sx * (33 + rand() * 31), sy * 54, FLOOR + 1.8, 0, sy * 0.5, 1]);
-    for (let i = 0; i < 9; i++) basePts.push([sx * 63.5, sy * (21 + rand() * 33), FLOOR + 1.8, sx * 0.5, 0, 1]);
+    for (let i = 0; i < 9; i++) basePts.push([sx * (36 + rand() * 27), sy * 63, FLOOR + 1.8, 0, sy * 0.5, 1]);
+    for (let i = 0; i < 9; i++) basePts.push([sx * 63, sy * (36 + rand() * 27), FLOOR + 1.8, sx * 0.5, 0, 1]);
   }
 
   parts = {
@@ -184,10 +189,10 @@ function build() {
     },
     glints: { base: sparkleGeometry(basePts, rand), lid: sparkleGeometry(lidPts, rand) },
     materials: {
-      clear: plasticMaterial({ tint: [0.86, 0.9, 0.95], density: 0.005 }),
+      clear: plasticMaterial({ tint: [0.86, 0.9, 0.95], density: 0.002 }),
       // thick plastic seen end on goes grey, like the case's walls and the tray's rails
-      wall: plasticMaterial({ tint: [0.42, 0.44, 0.48], density: 0.08, chrome: 0.3 }),
-      rail: plasticMaterial({ tint: [0.3, 0.32, 0.36], density: 0.07, chrome: 0.5 }),
+      wall: plasticMaterial({ tint: [0.5, 0.52, 0.56], density: 0.03, chrome: 0.12, edge: 3 }),
+      rail: plasticMaterial({ tint: [0.42, 0.44, 0.48], density: 0.04, chrome: 0.3, edge: 3 }),
       edge: new THREE.MeshStandardMaterial({ color: 0xe6e9ee, metalness: 1, roughness: 0.16, envMapIntensity: 1.5 }),
       glints: null,
     },

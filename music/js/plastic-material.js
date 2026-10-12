@@ -22,6 +22,7 @@ const fragment = /* glsl */ `
   uniform float uDensity;  // how much it absorbs, per millimetre
   uniform float uOpacity;
   uniform float uChrome;   // thick plastic mirrors the room even face on, like chrome
+  uniform float uEdge;     // how far round a curved edge the mirroring reaches: lower is wider
 
   varying vec3 vViewPos;
   varying vec3 vNormal;
@@ -29,7 +30,7 @@ const fragment = /* glsl */ `
   ${STUDIO_GLSL}
 
   float fresnel(float cosv) {
-    return 0.04 + 0.96 * pow(1.0 - cosv, 5.0);
+    return 0.04 + 0.96 * pow(1.0 - cosv, uEdge);
   }
 
   void main() {
@@ -61,7 +62,7 @@ const fragment = /* glsl */ `
   }
 `;
 
-export function plasticMaterial({ tint = [0.9, 0.93, 0.96], density = 0.006, chrome = 0 } = {}) {
+export function plasticMaterial({ tint = [0.9, 0.93, 0.96], density = 0.006, chrome = 0, edge = 5 } = {}) {
   return new THREE.ShaderMaterial({
     vertexShader: vertex,
     fragmentShader: fragment,
@@ -71,6 +72,7 @@ export function plasticMaterial({ tint = [0.9, 0.93, 0.96], density = 0.006, chr
       uDensity: { value: density },
       uOpacity: { value: 1 },
       uChrome: { value: chrome },
+      uEdge: { value: edge },
     },
     transparent: true,
     depthWrite: false,

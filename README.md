@@ -3,7 +3,7 @@
 Personal portfolio site, live at **https://moeamani.vercel.app** (music at `/music/`). The pages are plain HTML, CSS and JavaScript with no build step. A small API keeps the music in Vercel Blob storage. Every push to the repo's default branch deploys to production.
 
 - `index.html`: home page (a placeholder for now; links to Music)
-- `music/`: the music page. Every song is a disc in its own clear CD case. You can open the case, turn it round, and play the song right there on the page.
+- `music/`: the music page. Every song is a disc in its own clear CD case. You can open the case, turn it in your hand (let go and it swings back face on), and play the song right there on the page.
 - `api/`: the music library. It lists the songs for visitors and handles uploads, which need a password.
 
 ## The music page
@@ -11,7 +11,7 @@ Personal portfolio site, live at **https://moeamani.vercel.app** (music at `/mus
 Visitors see each song's artwork printed on a disc, with its title, album and year. They can play songs in order, one after another, without leaving the page.
 
 Controls:
-- Click or tap the case to open it, and drag to turn it.
+- Click or tap the case to open it. Drag to turn it; let go and it swings back face on.
 - Use the dock to switch songs.
 - The turning-disc button stops all movement.
 - Keys: ←/→ switch songs, O opens the case, S stops movement, P or Space plays.

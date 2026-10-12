@@ -4,19 +4,33 @@ import { studioEnvironment } from './studio.js';
 
 const FOV = 24;
 const OPEN = THREE.MathUtils.degToRad(176); // a lid lies back a little short of flat
-const REST_YAW = 0.12;
+// at rest it's turned a little: right side nearer, top leaning away, tipped anticlockwise
+const REST_YAW = -0.1;
 const REST_PITCH = -0.1;
-const REST_ROLL = -0.035;
-const SPIN = 1.1; // radians a second: the disc turns slowly
-const SPACING = H + 22; // between cases as they slide past each other
+const REST_ROLL = 0.06;
+const SPIN = 0.12; // radians a second: the disc barely turns, about 7 degrees a second
+const SLIDE = 1.0; // seconds for one case to make way for the next
 const DRAG_YAW = 0.0085; // radians per pixel
 const DRAG_PITCH = 0.006;
 
 const clamp = (v, a, b) => Math.min(Math.max(v, a), b);
 const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+const easeIn = (t) => t * t * t;
+const easeOutBack = (t) => 1 + 2.2 * Math.pow(t - 1, 3) + 1.2 * Math.pow(t - 1, 2);
+// how far through [a, b] the time t is, 0 to 1
+const span = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
 
-// The 3D scene: a jewel case, turned by dragging, opened by tapping. Moving to another song slides
-// the next case in from above (or below, going back) while this one slides away.
+// A critically damped spring towards `target`, time constant `tau` seconds.
+function follow(state, target, tau, dt) {
+  const w = 1 / tau;
+  state.vel += (w * w * (target - state.value) - 2 * w * state.vel) * dt;
+  state.value += state.vel * dt;
+}
+
+// The 3D scene: a jewel case, turned by dragging (it always comes back face on), opened by
+// tapping. Moving to another song, the next case drops in from above and waits at the top while
+// this one falls away backwards, then slides down into its place.
 export class Stage {
   constructor(container, { reducedMotion = false } = {}) {
     this.container = container;
@@ -43,7 +57,7 @@ export class Stage {
     this.camera = new THREE.PerspectiveCamera(FOV, 1, 10, 6000);
 
     // a white wall a little behind the case, to catch its shadow
-    const wall = new THREE.Mesh(new THREE.PlaneGeometry(6000, 6000), new THREE.ShadowMaterial({ opacity: 0.09 }));
+    const wall = new THREE.Mesh(new THREE.PlaneGeometry(6000, 6000), new THREE.ShadowMaterial({ opacity: 0.07 }));
     wall.position.z = -42;
     wall.receiveShadow = true;
     scene.add(wall);
@@ -117,8 +131,8 @@ export class Stage {
     this.state.still = still;
   }
 
-  // Put a disc in the case. `direction` 1 slides the next case down from above, -1 brings the
-  // previous one up from below, 0 just swaps it.
+  // Put a disc in the case. `direction` 1 brings the next case down from above, -1 brings the
+  // previous one up from below, 0 just swaps the disc.
   show(print, direction = 0) {
     const s = this.state;
     if (s.slide) this.#endSlide();
@@ -139,9 +153,29 @@ export class Stage {
   #endSlide() {
     const { from, to } = this.state.slide;
     from.group.visible = false;
-    from.group.position.y = 0;
-    to.group.position.y = 0;
+    for (const c of [from, to]) {
+      c.group.position.set(0, 0, 0);
+      c.group.rotation.set(0, 0, 0);
+    }
     this.state.slide = null;
+  }
+
+  // Where each case is, t seconds into a change of song.
+  #slide(t) {
+    const { from, to, dir } = this.state.slide;
+    // the new one drops in, waits with its lower part showing above, then settles into place
+    // just in front, coming level as it lands
+    const arrive = easeOutBack(span(t, 0.58, 0.95));
+    to.group.position.set(
+      0,
+      dir * H * (1.5 - 0.6 * easeOut(span(t, 0, 0.2)) - 0.06 * span(t, 0.2, 0.6) - 0.84 * arrive),
+      24 * (1 - span(t, 0.8, 1)),
+    );
+    to.group.rotation.set(dir * 0.28 * (1 - easeOut(span(t, 0.55, 0.98))), 0, dir * 0.05 * (1 - arrive));
+    // the old one falls away backwards, top first, and out of sight
+    const fall = ease(span(t, 0.05, 0.65));
+    from.group.position.set(0, -dir * H * (0.85 * fall + 0.8 * easeIn(span(t, 0.65, 1))), -170 * ease(span(t, 0.05, 1)));
+    from.group.rotation.set(-dir * 0.55 * ease(span(t, 0.05, 0.85)), 0.15 * fall, -dir * 0.06 * fall);
   }
 
   #update(dt) {
@@ -149,9 +183,9 @@ export class Stage {
     this.time += dt;
     this.onFrame?.(dt);
 
-    // each lid swings on a spring, past where it stops and back; shut, it bounces off the base
-    const k = this.reducedMotion ? 120 : 64;
-    const damping = 2 * Math.sqrt(k) * (this.reducedMotion ? 1 : 0.6);
+    // each lid snaps open or shut on a spring; shut, it bounces off the base and settles
+    const k = this.reducedMotion ? 120 : 70;
+    const damping = 2 * Math.sqrt(k) * (this.reducedMotion ? 1 : 0.62);
     for (const c of this.cases) {
       if (!c.group.visible) continue;
       const target = c === this.current && s.open ? OPEN : 0;
@@ -159,13 +193,19 @@ export class Stage {
       c.lidAngle += c.lidVel * dt;
       if (c.lidAngle < 0) {
         c.lidAngle = 0;
-        c.lidVel *= -0.25;
+        c.lidVel *= -0.4;
       }
       c.openAngle = c.lidAngle;
     }
+    // the framing follows the lid, a little behind it: once the lid has shut, the case slides
+    // back to the middle and comes closer
     const spread = Math.max(0, -Math.cos(this.current.lidAngle)); // 0 shut, 1 lying open
-    this.frame.position.x = (W / 2) * spread;
-    this.#fit(spread);
+    this.view ??= { value: spread, vel: 0 };
+    if (this.reducedMotion) this.view.value = spread;
+    else follow(this.view, spread, spread > this.view.value ? 0.05 : 0.3, dt);
+    const framed = clamp(this.view.value, 0, 1);
+    this.frame.position.x = (W / 2) * framed;
+    this.#fit(framed);
 
     // the disc winds up and down rather than jumping
     const want = s.still ? 0 : SPIN;
@@ -173,21 +213,20 @@ export class Stage {
     s.disc -= s.spinSpeed * dt;
     for (const c of this.cases) c.discAngle = s.disc;
 
-    // sliding to another case
+    // changing song
     if (s.slide) {
-      s.slide.t = Math.min(s.slide.t + dt / 0.85, 1);
-      const p = ease(s.slide.t);
-      s.slide.from.group.position.y = -s.slide.dir * SPACING * p;
-      s.slide.to.group.position.y = s.slide.dir * SPACING * (1 - p);
-      if (s.slide.t >= 1) this.#endSlide();
+      s.slide.t += dt;
+      this.#slide(Math.min(s.slide.t, SLIDE));
+      if (s.slide.t >= SLIDE) this.#endSlide();
     }
 
-    // let go, it coasts, then settles face on: the front, or the back if it was turned that way
+    // let go, it always swings back face on: back the way it came, or on round if it was
+    // turned more than halfway; never left showing its back
     s.idle = s.dragging ? 0 : s.idle + dt;
     if (!s.dragging) {
-      const face = REST_YAW + Math.round((s.yaw - REST_YAW) / Math.PI) * Math.PI;
-      const slow = THREE.MathUtils.smoothstep(3 - Math.abs(s.yawVel), 0, 2.5);
-      s.yawVel += (16 * slow * (face - s.yaw) - THREE.MathUtils.lerp(1.4, 6.5, slow) * s.yawVel) * dt;
+      const turn = Math.PI * 2;
+      const front = REST_YAW + Math.round((s.yaw + s.yawVel * 0.15 - REST_YAW) / turn) * turn;
+      s.yawVel += (26 * (front - s.yaw) - 7.4 * s.yawVel) * dt;
       s.yaw += s.yawVel * dt;
       s.pitchVel += (30 * (REST_PITCH - s.pitch) - 9 * s.pitchVel) * dt;
       s.pitch += s.pitchVel * dt;
@@ -285,7 +324,7 @@ export class Stage {
         const a = drag.trail[0];
         const b = drag.trail[drag.trail.length - 1];
         const v = (b.x - a.x) / Math.max(b.t - a.t, 1); // px per ms
-        s.yawVel = clamp(v * 1000 * DRAG_YAW, -14, 14);
+        s.yawVel = clamp(v * 1000 * DRAG_YAW, -9, 9);
       }
       s.dragging = false;
       drag = null;
