@@ -415,7 +415,7 @@ function debugPanel(stage, stageError) {
       !stage
         ? `the 3D case never started: ${stageError?.message || 'unknown'}`
         : `GPU: ${r.gpu}\nfloat targets: ${r.float} · max samples ${r.maxSamples}\n` +
-          `${r.tier ? 'lighter' : 'full'} scene, ${r.size} at ${r.pixelRatio}x · ${r.frames} frames drawn`,
+          `${r.tier ? 'lighter' : 'full'} scene, ${r.size} at ${r.pixelRatio}x · ${r.frames} frames drawn\n${r.smoothing}`,
       ...(r?.problems.length ? ['problems:', ...r.problems.map((x) => `  ${x}`)] : []),
       document.querySelector('.mx-flat') ? 'showing the artwork flat' : document.querySelector('.mx-canvas') ? 'showing the 3D case' : '',
       ...said.slice(-10),

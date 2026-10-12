@@ -1,6 +1,8 @@
 // The light, the plastic and the disc. From Ann Nguyen's CD Case
 // (https://github.com/annnguyentt/vibe-coding/tree/main/cd-case, shaders.js), as she wrote it, except
-// that the backdrop takes the shadows of two cases: one making way for the next.
+// that the backdrop takes the shadows of two cases: one making way for the next, and that the rods
+// and the disc can cap their light at white (uCeiling) before multisampling averages it, so on a
+// low-density screen an edge catching a lamp 24 times brighter than white still comes out smooth.
 export const STUDIO = `
   float box(vec2 p, vec2 c, vec2 hs, float soft) {
     vec2 q = abs(p - c) - hs;
@@ -184,6 +186,7 @@ const OUTSIDE = `
 export const ROD_FRAG = `
   uniform int uSamples;
   uniform float uIor;
+  uniform float uCeiling;
   uniform vec3 uAbsorb;
   centroid varying vec3 vP;
   centroid varying vec3 vN;
@@ -300,7 +303,7 @@ export const ROD_FRAG = `
       spark += inside.a * (1.0 - F);
     }
     vec3 col = refl * F + through * (1.0 - F);
-    gl_FragColor = vec4(col, 2.0 + spark);
+    gl_FragColor = vec4(min(col, vec3(uCeiling)), 2.0 + spark);
   }
 `;
 
@@ -367,6 +370,7 @@ export const DISC_VERT = `
 
 export const DISC_FRAG = `
   uniform sampler2D uArt;
+  uniform float uCeiling;
   uniform float uArtIn;
   uniform float uPrintOut;
   varying vec3 vLocal;
@@ -417,7 +421,7 @@ export const DISC_FRAG = `
 
     if (vFace > 1.5) {
       col = vec3(0.3, 0.31, 0.33) + studio(R) * 0.25;
-      gl_FragColor = vec4(col, 2.0);
+      gl_FragColor = vec4(min(col, vec3(uCeiling)), 2.0);
       return;
     }
 
@@ -434,7 +438,7 @@ export const DISC_FRAG = `
       float clear = 1.0 - smoothstep(14.6, 15.2, r);
       col = mix(col, vec3(0.62, 0.64, 0.67) + studio(R) * 0.06, clear);
       col = mix(col, edge, smoothstep(58.0, 58.9, r) * 0.85);
-      gl_FragColor = vec4(col, 2.0);
+      gl_FragColor = vec4(min(col, vec3(uCeiling)), 2.0);
       return;
     }
 
@@ -444,7 +448,7 @@ export const DISC_FRAG = `
     col += min(glare(R), vec3(2.5)) * fresnel(cosv, 1.5) * printed * 0.9;
     float rim = smoothstep(uPrintOut, uPrintOut + 0.5, r) * smoothstep(58.0, 58.9, r);
     col = mix(col, edge, rim * 0.85);
-    gl_FragColor = vec4(col, 2.0);
+    gl_FragColor = vec4(min(col, vec3(uCeiling)), 2.0);
   }
 `;
 

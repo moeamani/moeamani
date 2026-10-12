@@ -36,6 +36,7 @@ const MSAA = 4;
 // Render pixels: the screen's own density (to 2x), within this many pixels in all. About a 15" Retina
 // MacBook's full window; a big 1x monitor at 2x would be three times it, and that was too slow.
 const PIXEL_BUDGET = 6.5e6;
+const LOW_DENSITY_RATIO = 1.5; // what a 1x or 1.25x screen is drawn at
 const ROOM_SIZE = 512;
 const STARS = 1.6;
 const STAR_THRESHOLD = 2.0;
@@ -365,6 +366,8 @@ export function createStage(container, { reducedMotion = false } = {}) {
   const coarse = window.matchMedia('(pointer: coarse)').matches;
   // rays traced per pixel through the plastic; shared by every rod material, set in layout()
   const rodSamples = { value: coarse ? 1 : 2 };
+  // the brightest the rods and disc write: no limit, or white at low density (see sharpen())
+  const ceiling = { value: 1e4 };
 
   const rodMaterial = () =>
     new THREE.ShaderMaterial({
@@ -376,6 +379,7 @@ export function createStage(container, { reducedMotion = false } = {}) {
         uDepth: { value: DEPTH },
         uIor: { value: IOR },
         uSamples: rodSamples,
+        uCeiling: ceiling,
         uAbsorb: { value: new THREE.Vector3(...ABSORB) },
       },
       vertexShader: ROD_VERT,
@@ -425,6 +429,7 @@ export function createStage(container, { reducedMotion = false } = {}) {
     const discMat = new THREE.ShaderMaterial({
       uniforms: {
         uArt: { value: bare },
+        uCeiling: ceiling,
         uArtIn: { value: ART_IN },
         uPrintOut: { value: PRINT_OUT },
       },
@@ -850,22 +855,34 @@ export function createStage(container, { reducedMotion = false } = {}) {
   // disc) gets 4x multisampling like the glass has, and each pixel of plastic traces 4 rays, not 2.
   let pageAA = false;
   let smooth = true; // turned off if even that is too slow
+  // Multisampling averages light before it's clipped to white, so an edge pixel with one of its
+  // samples on a lamp (up to 24x white) still averages to over white: a hard white speck. Capping
+  // at white first lets those edges smooth like the rest. Only at low density, where the specks are
+  // big enough to see; on a dense screen the scene stays exactly as designed.
   function sharpen(low) {
-    rodSamples.value = coarse ? 1 : low ? 4 : 2;
-    if (low === pageAA) return;
-    pageAA = low;
+    // drawn at 1.5x, the extra pixels smooth the disc and the rays; turned down to 1x, they can't
+    const coarseRender = low && renderer.getPixelRatio() < LOW_DENSITY_RATIO;
+    rodSamples.value = coarse ? 1 : coarseRender ? 4 : 2;
+    ceiling.value = low ? 1 : 1e4;
+    if (coarseRender === pageAA) return;
+    pageAA = coarseRender;
     rtPage.dispose();
     // no depth: the wall goes down first and the discs over it, even one falling away behind it
-    rtPage = low ? target(MSAA, false) : target(0);
+    rtPage = pageAA ? target(MSAA, false) : target(0);
     picked.uTex.value = rtPage.texture;
   }
 
   function layout() {
     const w = container.clientWidth || 1;
     const h = container.clientHeight || 1;
-    const natural = Math.max(1, Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(PIXEL_BUDGET / (w * h))));
+    // a low-density screen is drawn at 1.5x and shrunk to fit: the light refracted through each rod
+    // changes faster than one pixel can show, and only more pixels smooth that
+    const dpr = window.devicePixelRatio || 1;
+    const low = dpr < 1.5;
+    const want = low ? LOW_DENSITY_RATIO : Math.min(dpr, 2);
+    const natural = Math.max(1, Math.min(want, Math.sqrt(PIXEL_BUDGET / (w * h))));
     renderer.setPixelRatio(Math.min(natural, ratioCap));
-    sharpen(smooth && natural < 1.5);
+    sharpen(smooth && low);
     renderer.setSize(w, h, false);
     const size = renderer.getDrawingBufferSize(new THREE.Vector2());
     rtPage.setSize(size.x, size.y);
@@ -1090,6 +1107,7 @@ export function createStage(container, { reducedMotion = false } = {}) {
     ...report,
     tier,
     pixelRatio: renderer.getPixelRatio(),
+    smoothing: `${ceiling.value === 1 ? 'low-density: light capped' : 'as designed'}${pageAA ? ', page AA' : ''}, ${rodSamples.value} rays`,
     size: `${rtPage.width}x${rtPage.height}`,
     frames,
   });
