@@ -14,15 +14,10 @@ const tool = {
   library: $('[data-tool="library"]'),
 };
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-const touch = matchMedia('(hover: none)').matches;
-
-const CYCLE = 7; // seconds on each song while nobody's touched anything
-const CYCLE_OPEN = 2.2; // when, in that, the case opens
 
 document.title = `Music — ${artist.name}`;
 $('.mx-name').textContent = artist.name;
 $('.mx-name').href = artist.home || '../';
-$('.mx-hint').textContent = `${touch ? 'Tap' : 'Click'} the case to open it · drag to turn it`;
 
 const time = (s) => (Number.isFinite(s) && s >= 0 ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}` : '');
 
@@ -39,8 +34,8 @@ async function boot() {
 
   let stage = null;
   try {
-    const { Stage } = await import('./stage.js');
-    stage = new Stage(stageEl, { reducedMotion });
+    const { createStage } = await import('./stage.js');
+    stage = createStage(stageEl, { reducedMotion });
   } catch (err) {
     console.error(err);
   }
@@ -74,9 +69,7 @@ async function boot() {
   await Promise.all(tracks.map(look));
 
   let current = -1;
-  let cycling = false;
-  let cycleT = 0;
-  let cycleOpened = false;
+  let cycling = false; // until someone does something, the songs take turns
   let thumbs = [];
 
   // --- the dock ---
@@ -180,9 +173,6 @@ async function boot() {
     stopAudio();
     current = i;
     const t = tracks[i];
-    cycleT = 0;
-    cycleOpened = false;
-    if (direction) setOpen(false);
 
     thumbs.forEach((b, k) => {
       b.setAttribute('aria-current', String(k === i));
@@ -254,8 +244,8 @@ async function boot() {
 
   // --- the tools ---
 
-  function setOpen(open) {
-    stage?.setOpen(open);
+  // the case opens on its own too, now and then: the button follows it
+  function showOpen(open) {
     tool.open.setAttribute('aria-pressed', String(open));
     tool.open.setAttribute('aria-label', open ? 'Close the case' : 'Open the case');
   }
@@ -267,14 +257,12 @@ async function boot() {
   }
 
   function stopCycle() {
-    if (!cycling) return;
     cycling = false;
-    if (!playing) delete thumbs[current]?.dataset.progress;
   }
 
   const toggleOpen = () => {
     stopCycle();
-    setOpen(!stage.open);
+    stage.setOpen(!stage.open);
   };
   const toggleStill = () => setStill(tool.still.getAttribute('aria-pressed') !== 'true');
   const togglePlay = () => (playing ? audio.pause() : play());
@@ -337,7 +325,7 @@ async function boot() {
 
   buildDock();
   setStill(reducedMotion);
-  setOpen(false);
+  showOpen(false);
   setPlaying(false);
   if (tracks.length) select(0);
   else empty();
@@ -351,22 +339,17 @@ async function boot() {
 
   stage.onTap = toggleOpen;
   stage.onInteract = stopCycle;
-  stage.onFrame = (dt) => {
+  stage.onOpen = showOpen;
+  // the case opened and shut on its own: while the songs are taking turns, on to the next
+  stage.onShown = () => cycling && select(current + 1, 1);
+  stage.onFrame = () => {
     const bar = thumbs[current];
+    if (!bar) return;
     if (playing && audio.duration) {
       bar.dataset.progress = '';
       bar.style.setProperty('--p', (audio.currentTime / audio.duration).toFixed(4));
       showTime();
-    } else if (cycling && bar) {
-      cycleT += dt;
-      if (cycleT > CYCLE_OPEN && !cycleOpened) {
-        cycleOpened = true;
-        setOpen(true);
-      }
-      if (cycleT >= CYCLE) select(current + 1, 1);
-      thumbs[current].dataset.progress = '';
-      thumbs[current].style.setProperty('--p', Math.min(cycleT / CYCLE, 1).toFixed(4));
-    } else if (bar) {
+    } else {
       delete bar.dataset.progress;
     }
   };

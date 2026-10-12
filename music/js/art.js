@@ -120,18 +120,19 @@ export function drawnArtwork(title, artist) {
 
 // --- the disc ------------------------------------------------------------------------------
 
-// The artwork printed over the disc, from the clear middle to just inside the edge.
+// The artwork printed over the disc, from the clear middle to just inside the edge. The disc's
+// shader trims it to 16.2-59.1mm from the middle; the print reaches a little past both, so the
+// shader draws the edges.
 export function discPrint(artwork) {
   const c = canvas(DISC_PX);
   if (!artwork) return c;
   const ctx = c.getContext('2d');
   const C = DISC_PX / 2;
-  const outer = 58.4;
   ctx.beginPath();
-  ctx.arc(C, C, outer * MM, 0, Math.PI * 2);
-  ctx.arc(C, C, 17.2 * MM, 0, Math.PI * 2, true);
+  ctx.arc(C, C, 59.7 * MM, 0, Math.PI * 2);
+  ctx.arc(C, C, 15.8 * MM, 0, Math.PI * 2, true);
   ctx.clip();
-  const d = outer * 2 * MM;
+  const d = 59.7 * 2 * MM;
   ctx.drawImage(artwork, C - d / 2, C - d / 2, d, d);
   return c;
 }
