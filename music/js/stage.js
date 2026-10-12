@@ -33,7 +33,9 @@ const SPIN_EASE = 0.9;
 const FIT = 0.6;
 const DOCK_CLEAR = 84;
 const MSAA = 4;
-const RESOLUTION = 2; // render pixels per CSS pixel
+// Render pixels: the screen's own density (to 2x), within this many pixels in all. About a 15" Retina
+// MacBook's full window; a big 1x monitor at 2x would be three times it, and that was too slow.
+const PIXEL_BUDGET = 6.5e6;
 const ROOM_SIZE = 512;
 const STARS = 1.6;
 const STAR_THRESHOLD = 2.0;
@@ -230,11 +232,8 @@ export function createStage(container, { reducedMotion = false } = {}) {
     canvas.remove();
     throw err;
   }
-  // Two pixels per CSS pixel on every screen, not the screen's own ratio: on a 1x or 1.25x display
-  // (most Windows PCs) the plastic's fine edges and refractions would otherwise get one pixel each
-  // and come out jagged. The browser shrinks the canvas to fit, averaging each 2x2, which is the
-  // same supersampling a Retina screen gets for free. A GPU that can't keep up is turned down below.
-  renderer.setPixelRatio(RESOLUTION);
+  // How finely to draw: see layout(). ratioCap is lowered when the GPU can't keep up.
+  let ratioCap = 2;
   renderer.autoClear = false;
   renderer.setClearColor(0xffffff, 0);
   const gl = renderer.getContext();
@@ -262,15 +261,15 @@ export function createStage(container, { reducedMotion = false } = {}) {
   };
   let tier = 0; // 0 as designed; 1 lighter
   let failed = false;
-  const target = (samples) =>
+  const target = (samples, depth = samples > 0) =>
     new THREE.WebGLRenderTarget(1, 1, {
       type: hdr ? THREE.HalfFloatType : THREE.UnsignedByteType,
       samples,
-      depthBuffer: samples > 0,
+      depthBuffer: depth,
       stencilBuffer: false,
       resolveDepthBuffer: false,
     });
-  const rtPage = target(0);
+  let rtPage = target(0);
   const rt = [target(MSAA), target(MSAA)];
   const rtBright = target(0);
   const rtStarA = target(0);
@@ -363,7 +362,9 @@ export function createStage(container, { reducedMotion = false } = {}) {
   const depthOnly = new THREE.MeshBasicMaterial({ colorWrite: false });
   glass.add(copyQuad);
 
-  const samples = window.matchMedia('(pointer: coarse)').matches ? 1 : 2;
+  const coarse = window.matchMedia('(pointer: coarse)').matches;
+  // rays traced per pixel through the plastic; shared by every rod material, set in layout()
+  const rodSamples = { value: coarse ? 1 : 2 };
 
   const rodMaterial = () =>
     new THREE.ShaderMaterial({
@@ -374,7 +375,7 @@ export function createStage(container, { reducedMotion = false } = {}) {
         uProj: { value: camera.projectionMatrix },
         uDepth: { value: DEPTH },
         uIor: { value: IOR },
-        uSamples: { value: samples },
+        uSamples: rodSamples,
         uAbsorb: { value: new THREE.Vector3(...ABSORB) },
       },
       vertexShader: ROD_VERT,
@@ -843,9 +844,28 @@ export function createStage(container, { reducedMotion = false } = {}) {
     renderer.render(final.scene, screenCam);
   }
 
+  // On a dense screen (Macs, phones) its own pixels are fine enough. On a 1x or 1.25x one (most
+  // Windows PCs) the disc's rim and the plastic's refractions would come out jagged, and drawing
+  // at 2x there costs too much on a big monitor. So instead, at low density: the page (wall and
+  // disc) gets 4x multisampling like the glass has, and each pixel of plastic traces 4 rays, not 2.
+  let pageAA = false;
+  let smooth = true; // turned off if even that is too slow
+  function sharpen(low) {
+    rodSamples.value = coarse ? 1 : low ? 4 : 2;
+    if (low === pageAA) return;
+    pageAA = low;
+    rtPage.dispose();
+    // no depth: the wall goes down first and the discs over it, even one falling away behind it
+    rtPage = low ? target(MSAA, false) : target(0);
+    picked.uTex.value = rtPage.texture;
+  }
+
   function layout() {
     const w = container.clientWidth || 1;
     const h = container.clientHeight || 1;
+    const natural = Math.max(1, Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(PIXEL_BUDGET / (w * h))));
+    renderer.setPixelRatio(Math.min(natural, ratioCap));
+    sharpen(smooth && natural < 1.5);
     renderer.setSize(w, h, false);
     const size = renderer.getDrawingBufferSize(new THREE.Vector2());
     rtPage.setSize(size.x, size.y);
@@ -898,7 +918,8 @@ export function createStage(container, { reducedMotion = false } = {}) {
   function lighten() {
     tier = 1;
     probing = false;
-    renderer.setPixelRatio(1);
+    ratioCap = 1;
+    smooth = false;
     for (let i = 0; i < rt.length; i++) {
       rt[i].dispose();
       rt[i] = target(2);
@@ -1013,20 +1034,28 @@ export function createStage(container, { reducedMotion = false } = {}) {
   const gaps = [];
   let probing = true;
   const probe = (gap) => {
-    if (!probing || document.hidden || gap > 0.1) return;
+    // a gap of over half a second is a pause (a hidden tab, a stall), not the frame rate
+    if (!probing || document.hidden || gap > 0.5) return;
     gaps.push(gap);
-    if (gaps.length < 120) return;
+    if (gaps.length < 45) return;
     gaps.sort((a, b) => a - b);
     const typical = gaps[gaps.length >> 1];
     gaps.length = 0;
     const ratio = renderer.getPixelRatio();
-    if (typical < 1 / 40 || ratio <= 1) {
+    if (typical < 1 / 40) {
       probing = false;
       return;
     }
-    renderer.setPixelRatio(
-      Math.max(1, Math.min(ratio - 0.25, Math.round(ratio * Math.sqrt(1 / 45 / typical) * 4) / 4)),
-    );
+    if (ratio <= 1) {
+      // as coarse as it goes: drop the extra smoothing, and that's all there is
+      probing = false;
+      if (smooth && (pageAA || rodSamples.value > 2)) {
+        smooth = false;
+        layout();
+      }
+      return;
+    }
+    ratioCap = Math.max(1, Math.min(ratio - 0.25, Math.round(ratio * Math.sqrt(1 / 45 / typical) * 4) / 4));
     layout();
   };
 
