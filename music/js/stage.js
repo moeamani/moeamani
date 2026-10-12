@@ -344,7 +344,6 @@ export function createStage(container, { reducedMotion = false } = {}) {
     }
     renderer.setRenderTarget(null);
   };
-  bakeRoom();
 
   const shadowOf = {
     uLight: { value: LIGHT.clone() },
@@ -527,6 +526,7 @@ export function createStage(container, { reducedMotion = false } = {}) {
     open: false,
     still: false,
     playing: false,
+    bob: 0, // how far the open case's bob has come in
   };
   let slide = null; // { t, dir, from, pose }: the last song's case making way
   let pose = null; // the current case's pose last frame
@@ -547,6 +547,7 @@ export function createStage(container, { reducedMotion = false } = {}) {
     st.phase = 'opening';
     st.phaseAt = st.t;
     st.auto = auto;
+    st.bob = 0;
     setOpenFlag(true);
   }
   function startClose() {
@@ -565,6 +566,13 @@ export function createStage(container, { reducedMotion = false } = {}) {
     else startClose();
   }
 
+  // the open case's bob, at strength k
+  const bob = (w, k) => ({
+    yaw: 0.06 * Math.sin(w * 0.6) * motion * k,
+    pitch: 0.02 * Math.sin(w * 0.8) * motion * k,
+    lid: 0.025 * Math.sin(w * 1.3) * motion * k,
+  });
+
   function showPose(t) {
     const w = st.swayT;
     const p = sway(w, motion);
@@ -577,19 +585,25 @@ export function createStage(container, { reducedMotion = false } = {}) {
       p.pitch = lerp(p.pitch, OPEN.pitch(q), clamp01(q / 1.45));
       p.roll *= 1 - clamp01(q / 1.45);
     } else if (st.phase === 'open') {
-      p.yaw = 0.06 * Math.sin(w * 0.6) * motion;
-      p.pitch = -0.1 + 0.02 * Math.sin(w * 0.8) * motion;
+      // Open, the case bobs a little. Switched on at full strength the moment it's open, that bob
+      // made it jump a few degrees in one frame; it comes in over a second instead.
+      st.bob = easeInOut(clamp01(since / 1.2));
+      const b = bob(w, st.bob);
+      p.yaw = b.yaw;
+      p.pitch = -0.1 + b.pitch;
       p.roll = 0;
-      p.lid = OPEN_ANGLE + 0.025 * Math.sin(w * 1.3) * motion;
+      p.lid = OPEN_ANGLE + b.lid;
       p.spread = 1;
     } else if (st.phase === 'closing') {
       const q = Math.min(since, CLOSE_T);
       const back = clamp01((q - 0.9) / (CLOSE_T - 0.9));
       const rest = easeInOut(back);
-      p.yaw = lerp(CLOSE.yaw(q), p.yaw, rest);
-      p.pitch = lerp(CLOSE.pitch(q), p.pitch, rest);
+      // and goes out as it starts to shut, rather than stopping dead
+      const b = bob(w, st.bob * (1 - easeInOut(clamp01(q / 0.6))));
+      p.yaw = lerp(CLOSE.yaw(q), p.yaw, rest) + b.yaw;
+      p.pitch = lerp(CLOSE.pitch(q), p.pitch, rest) + b.pitch;
       p.roll = lerp(CLOSE.roll(q), p.roll, rest);
-      p.lid = CLOSE.lid(q);
+      p.lid = CLOSE.lid(q) + b.lid;
       p.spread = CLOSE.spread(q);
     }
     p.pitch += lean.x + grab.x;
@@ -1052,7 +1066,7 @@ export function createStage(container, { reducedMotion = false } = {}) {
   let probing = true;
   const probe = (gap) => {
     // a gap of over half a second is a pause (a hidden tab, a stall), not the frame rate
-    if (!probing || document.hidden || gap > 0.5) return;
+    if (!probing || document.hidden || gap > 0.5 || frames < 30) return; // not while it settles in
     gaps.push(gap);
     if (gaps.length < 45) return;
     gaps.sort((a, b) => a - b);
@@ -1078,7 +1092,34 @@ export function createStage(container, { reducedMotion = false } = {}) {
 
   layout();
 
-  api.start = (onReady) => {
+  // Every shader, compiled before the first frame: each scene against the target it draws into,
+  // since the target decides the variant. Where the browser can (KHR_parallel_shader_compile)
+  // this happens off the page's thread; Chrome on Windows translates each shader to Direct3D,
+  // which for the plastic's took long enough to stall the first frames.
+  function warm() {
+    const jobs = [];
+    const compile = (into, scene, cam) => {
+      renderer.setRenderTarget(into);
+      jobs.push(renderer.compileAsync(scene, cam));
+    };
+    compile(rtPage, opaque, camera);
+    compile(rtPage, bake.scene, screenCam);
+    compile(rt[0], glass, camera);
+    compile(rtBright, bright.scene, screenCam);
+    compile(rtStarA, streak.scene, screenCam);
+    compile(null, final.scene, screenCam);
+    renderer.setRenderTarget(null);
+    return Promise.all(jobs);
+  }
+
+  api.start = async (onReady) => {
+    try {
+      await warm();
+    } catch (err) {
+      console.warn('CD case: shaders could not be compiled ahead.', err);
+    }
+    if (failed) return;
+    bakeRoom();
     let first = true;
     const tick = (now) => {
       if (failed) return;
@@ -1107,6 +1148,7 @@ export function createStage(container, { reducedMotion = false } = {}) {
     ...report,
     tier,
     pixelRatio: renderer.getPixelRatio(),
+    pose: pose && { yaw: pose.yaw, pitch: pose.pitch, lid: pose.lid, phase: st.phase },
     smoothing: `${ceiling.value === 1 ? 'low-density: light capped' : 'as designed'}${pageAA ? ', page AA' : ''}, ${rodSamples.value} rays`,
     size: `${rtPage.width}x${rtPage.height}`,
     frames,

@@ -25,6 +25,9 @@ const time = (s) => (Number.isFinite(s) && s >= 0 ? `${Math.floor(s / 60)}:${Str
 boot();
 
 async function boot() {
+  // the song list and the 3D code (three.js is the page's biggest download) load side by side
+  const loadingStage = import('./stage.js');
+  loadingStage.catch(() => {}); // reported below
   let tracks = [];
   try {
     // on a device with the upload password, skip the CDN's copy: changes show up straight away
@@ -36,13 +39,16 @@ async function boot() {
   let stage = null;
   let stageError = null;
   try {
-    const { createStage } = await import('./stage.js');
+    const { createStage } = await loadingStage;
     stage = createStage(stageEl, { reducedMotion });
   } catch (err) {
     stageError = err;
     console.error(err);
   }
-  if (debugging) debugPanel(stage, stageError);
+  if (debugging) {
+    debugPanel(stage, stageError);
+    window.mxStage = stage; // for poking at from the console
+  }
 
   // No WebGL, three.js didn't load, or the stage found it can't draw here: the artwork, flat.
   let flat = null;
@@ -76,7 +82,9 @@ async function boot() {
     }
     return looks.get(t.id);
   };
-  await Promise.all(tracks.map(look));
+  // the first song's pictures before anything shows; the rest fill in behind it
+  if (tracks.length) await look(tracks[0]);
+  tracks.forEach(look);
 
   let current = -1;
   let cycling = false; // until someone does something, the songs take turns
