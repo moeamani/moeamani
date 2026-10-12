@@ -81,7 +81,7 @@ export function drawnArtwork(title, artist) {
     // holographic foil
     const hues = [0, 40, 70, 140, 190, 230, 280, 320, 360];
     for (let k = 0; k < 3; k++) {
-      const g = ctx.createConicGradient(rand() * Math.PI * 2, 200 + rand() * 600, 200 + rand() * 600);
+      const g = sweep(ctx, rand() * Math.PI * 2, 200 + rand() * 600, 200 + rand() * 600, S);
       hues.forEach((h, i) => g.addColorStop(i / (hues.length - 1), `hsla(${h + k * 25}, 90%, 72%, ${0.55 - k * 0.12})`));
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, S, S);
@@ -150,7 +150,7 @@ export function discThumb(print) {
   ctx.fillStyle = g;
   circle(ctx, C, C, R);
   ctx.fill();
-  const rb = ctx.createConicGradient(-0.6, C, C);
+  const rb = sweep(ctx, -0.6, C, C, R);
   const spokes = ['#0000', '#ff4d6d55', '#ffd16655', '#5cf2a655', '#4dabff55', '#b06bff55', '#0000', '#0000', '#4dabff44', '#5cf2a644', '#ffd16644', '#0000', '#0000'];
   spokes.forEach((s, i) => rb.addColorStop(i / (spokes.length - 1), s));
   ctx.fillStyle = rb;
@@ -172,6 +172,15 @@ export function discThumb(print) {
 }
 
 // --- helpers -------------------------------------------------------------------------------
+
+// A conic gradient where the browser has them (Safari 16.1+, Firefox 112+); a linear one through
+// the same colours where it doesn't.
+function sweep(ctx, angle, x, y, size) {
+  if (ctx.createConicGradient) return ctx.createConicGradient(angle, x, y);
+  const dx = Math.cos(angle) * size;
+  const dy = Math.sin(angle) * size;
+  return ctx.createLinearGradient(x - dx, y - dy, x + dx, y + dy);
+}
 
 function circle(ctx, x, y, r) {
   ctx.beginPath();

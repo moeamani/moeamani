@@ -61,7 +61,11 @@ async function boot() {
           const artwork = (await art.loadArtwork(t.cover)) || art.drawnArtwork(t.title, artist.name);
           const print = art.discPrint(artwork);
           return { artwork, print, thumb: art.discThumb(print).toDataURL('image/png') };
-        })(),
+        })().catch((err) => {
+          // one song's pictures failing shouldn't keep the page from showing: a bare disc instead
+          console.error(err);
+          return { artwork: null, print: null, thumb: '' };
+        }),
       );
     }
     return looks.get(t.id);
@@ -186,7 +190,8 @@ async function boot() {
     look(t).then((l) => {
       if (tracks[current] !== t) return;
       if (stage) stage.show(l.print, direction);
-      else flat.src = l.artwork.toDataURL('image/jpeg', 0.9);
+      else if (l.artwork) flat.src = l.artwork.toDataURL('image/jpeg', 0.9);
+      else flat.removeAttribute('src');
     });
     tool.play.setAttribute('aria-disabled', 'false');
     live.textContent = [t.title, t.album, t.year].filter(Boolean).join(', ');

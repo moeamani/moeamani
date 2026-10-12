@@ -16,7 +16,9 @@ Controls:
 - The turning-disc button stops all movement: the disc, the drift, and the case opening on its own.
 - Keys: ←/→ switch songs, O opens the case, S stops movement, P or Space plays.
 
-Every so often the case opens on its own, stays open a few seconds, and shuts again; not while a song is playing. Until someone interacts, the next song comes in each time it shuts. With "reduce motion" set, it starts out still. Without WebGL, it shows the artwork flat.
+Every so often the case opens on its own, stays open a few seconds, and shuts again; not while a song is playing. Until someone interacts, the next song comes in each time it shuts. With "reduce motion" set, it starts out still. A mouse resting over the case holds the show for 2 seconds, in case you're about to click.
+
+The 3D case needs WebGL 2: Safari 15 or later (iOS 15+), and any current Chrome, Edge or Firefox. Where it can't start, the page shows the artwork flat and still plays the songs.
 
 The name in the corner comes from [`music/js/config.js`](music/js/config.js).
 

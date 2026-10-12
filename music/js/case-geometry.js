@@ -1,6 +1,6 @@
 // The case, in millimetres: rods and sheets of clear plastic. From Ann Nguyen's CD Case
 // (https://github.com/annnguyentt/vibe-coding/tree/main/cd-case, caseGeometry.js), as she wrote it.
-import * as THREE from 'three';
+import * as THREE from './three.js';
 
 export const CASE = 146;
 export const HALF = CASE / 2;

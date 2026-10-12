@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from './three.js';
 import { CASE, HALF, HINGE, discGeometry, lidGeometry, trayGeometry } from './case-geometry.js';
 import {
   BACKDROP_FRAG,
@@ -49,6 +49,8 @@ const GRAB_TILT = 0.45;
 const GRAB_K = 16;
 const GRAB_C = 5.5;
 const TAP_SLOP = 6;
+const TOUCH_SLOP = 14; // a fingertip wanders further than a mouse while it taps
+const HOVER_HOLD = 2; // seconds a pointer resting over the case keeps it from opening on its own
 
 // where the print starts and stops on the disc, in millimetres from the middle
 const ART_IN = 16.2;
@@ -459,7 +461,7 @@ export function createStage(container, { reducedMotion = false } = {}) {
   let item = items[0];
   item.shown = true;
 
-  const pointer = { x: 0, y: 0, over: false };
+  const pointer = { x: 0, y: 0, over: false, movedAt: 0 };
   const lean = { x: 0, y: 0 };
   const grab = {
     active: false,
@@ -472,6 +474,7 @@ export function createStage(container, { reducedMotion = false } = {}) {
     flick: { x: 0, y: 0 },
     moved: 0,
     dist: 0,
+    touch: false,
   };
   const st = {
     t: 0,
@@ -655,7 +658,9 @@ export function createStage(container, { reducedMotion = false } = {}) {
     raycaster.setFromCamera(ndc, camera);
     return raycaster.intersectObjects([item.hitTray, item.hitLid], false).length > 0;
   };
-  const hovering = () => pointer.over && !grab.active && caseAt(pointer.x, pointer.y);
+  // someone about to tap the case: the show waits. A mouse just left sitting there doesn't count.
+  const hovering = () =>
+    pointer.over && !grab.active && st.t - pointer.movedAt < HOVER_HOLD && caseAt(pointer.x, pointer.y);
 
   function frame(dt) {
     st.t += dt;
@@ -845,6 +850,7 @@ export function createStage(container, { reducedMotion = false } = {}) {
   const onMove = (e) => {
     [pointer.x, pointer.y] = toNdc(e);
     pointer.over = true;
+    pointer.movedAt = st.t;
     if (grab.active) {
       const dx = e.clientX - grab.last.x;
       const dy = e.clientY - grab.last.y;
@@ -870,6 +876,7 @@ export function createStage(container, { reducedMotion = false } = {}) {
     grab.start = { x: e.clientX, y: e.clientY };
     grab.last = { x: e.clientX, y: e.clientY };
     grab.dist = 0;
+    grab.touch = e.pointerType !== 'mouse';
     grab.flick = { x: 0, y: 0 };
     container.setPointerCapture(e.pointerId);
     container.style.cursor = 'grabbing';
@@ -882,7 +889,8 @@ export function createStage(container, { reducedMotion = false } = {}) {
     grab.vy = still ? 0 : grab.flick.y;
     if (container.hasPointerCapture(e.pointerId)) container.releasePointerCapture(e.pointerId);
     container.style.cursor = '';
-    if (e.type === 'pointerup' && grab.dist < TAP_SLOP) (api.onTap ? api.onTap() : toggleOpen());
+    if (grab.touch) pointer.over = false; // a lifted finger isn't hovering, whether or not pointerleave says so
+    if (e.type === 'pointerup' && grab.dist < (grab.touch ? TOUCH_SLOP : TAP_SLOP)) (api.onTap ? api.onTap() : toggleOpen());
   };
   container.addEventListener('pointermove', onMove);
   container.addEventListener('pointerleave', onLeave);
