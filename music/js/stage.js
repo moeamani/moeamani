@@ -205,6 +205,7 @@ export function createStage(container, { reducedMotion = false } = {}) {
     onFrame: null, // (dt) once a frame
     onOpen: null, // (open) the case started opening or closing
     onShown: null, // the case opened and closed again on its own
+    onFail: null, // (problems) this browser couldn't draw the scene after all: the stage has removed itself
   };
 
   const canvas = document.createElement('canvas');
@@ -231,8 +232,31 @@ export function createStage(container, { reducedMotion = false } = {}) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.autoClear = false;
   renderer.setClearColor(0xffffff, 0);
+  const gl = renderer.getContext();
   const hdr =
     renderer.extensions.has('EXT_color_buffer_float') || renderer.extensions.has('EXT_color_buffer_half_float');
+
+  // Some browsers start WebGL and then can't draw this scene: an in-app browser with less memory,
+  // a graphics driver that won't compile a shader, render targets it can't draw into. Rather than
+  // leave the page empty, the stage checks its first frames, tries again lighter, and if it still
+  // can't, hands back to the page (api.onFail). What it found is kept for ?debug.
+  const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+  const report = {
+    gpu: String(gl.getParameter(debugInfo ? debugInfo.UNMASKED_RENDERER_WEBGL : gl.RENDERER)),
+    float: renderer.extensions.has('EXT_color_buffer_float') ? 'float' : hdr ? 'half float' : 'none',
+    maxSamples: gl.getParameter(gl.MAX_SAMPLES),
+    problems: [],
+  };
+  const shaderErrors = [];
+  renderer.debug.onShaderError = (gl, program, vertex, fragment) => {
+    const first = (log) => (log || '').trim().split('\n')[0];
+    const why =
+      first(gl.getShaderInfoLog(fragment)) || first(gl.getShaderInfoLog(vertex)) || first(gl.getProgramInfoLog(program));
+    shaderErrors.push(`a shader failed: ${why || 'no reason given'}`);
+    console.error('CD case: a shader failed.', gl.getShaderInfoLog(fragment), gl.getShaderInfoLog(vertex), gl.getProgramInfoLog(program));
+  };
+  let tier = 0; // 0 as designed; 1 lighter
+  let failed = false;
   const target = (samples) =>
     new THREE.WebGLRenderTarget(1, 1, {
       type: hdr ? THREE.HalfFloatType : THREE.UnsignedByteType,
@@ -307,6 +331,7 @@ export function createStage(container, { reducedMotion = false } = {}) {
   });
   const bake = pass(ROOM_BAKE_FRAG, { uFace: { value: 0 }, uSize: { value: ROOM_SIZE } });
   const bakeRoom = () => {
+    if (failed) return;
     for (let face = 0; face < 6; face++) {
       bake.material.uniforms.uFace.value = face;
       renderer.setRenderTarget(roomRT, face);
@@ -841,7 +866,89 @@ export function createStage(container, { reducedMotion = false } = {}) {
 
   const ro = new ResizeObserver(() => layout());
   ro.observe(container);
-  canvas.addEventListener('webglcontextrestored', bakeRoom);
+
+  // Is it really drawing? Lost context, shaders that didn't compile, render targets the GPU can't
+  // draw into or ran out of memory for, and the plain wall in the corner not coming out white.
+  function verify() {
+    if (gl.isContextLost()) return ['the graphics context was lost'];
+    const problems = [...shaderErrors];
+    for (const [name, t] of [['page', rtPage], ['glass', rt[0]], ['glass', rt[1]], ['stars', rtBright]]) {
+      renderer.setRenderTarget(t);
+      const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+      if (status !== gl.FRAMEBUFFER_COMPLETE) problems.push(`can't draw into the ${name} target (0x${status.toString(16)})`);
+    }
+    renderer.setRenderTarget(null);
+    for (let e = gl.getError(), n = 0; e !== gl.NO_ERROR && n < 16; e = gl.getError(), n++) {
+      if (e === gl.OUT_OF_MEMORY) problems.push('ran out of graphics memory');
+      if (e === gl.INVALID_FRAMEBUFFER_OPERATION) problems.push('drew into a target that was not ready');
+    }
+    const px = new Uint8Array(4);
+    gl.readPixels(1, 1, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    if (Math.min(px[0], px[1], px[2]) < 200) problems.push(`the wall came out ${px[0]},${px[1]},${px[2]}, not white`);
+    return [...new Set(problems)];
+  }
+
+  // A lighter scene for a browser that couldn't hold the full one: one pixel per CSS pixel, and
+  // two samples for the plastic's edges instead of four. Less than a quarter of the memory.
+  function lighten() {
+    tier = 1;
+    probing = false;
+    renderer.setPixelRatio(1);
+    for (let i = 0; i < rt.length; i++) {
+      rt[i].dispose();
+      rt[i] = target(2);
+    }
+    layout();
+  }
+
+  let checkAt = 1; // the frame to check next
+  let frames = 0;
+  function trouble(problems) {
+    report.problems.push(...problems.map((p) => (tier ? `${p} (lighter)` : p)));
+    console.warn(`CD case: ${problems.join('; ')}.`);
+    if (tier === 0 && !shaderErrors.length && !gl.isContextLost()) {
+      lighten();
+      checkAt = frames + 2;
+    } else {
+      fail();
+    }
+  }
+
+  let lostTimer = 0;
+  const onLost = () => {
+    report.problems.push(`the graphics context was lost${tier ? ' (lighter)' : ''}`);
+    lostTimer = setTimeout(fail, 3000); // and didn't come back
+  };
+  const onRestored = () => {
+    clearTimeout(lostTimer);
+    if (failed) return;
+    // lost once: come back lighter; lost again, lighter, and it's not going to work here
+    if (tier) return fail();
+    bakeRoom();
+    lighten();
+    checkAt = frames + 2;
+  };
+  canvas.addEventListener('webglcontextlost', onLost);
+  canvas.addEventListener('webglcontextrestored', onRestored);
+
+  function fail() {
+    if (failed) return;
+    failed = true;
+    cancelAnimationFrame(raf);
+    clearTimeout(lostTimer);
+    ro.disconnect();
+    container.removeEventListener('pointermove', onMove);
+    container.removeEventListener('pointerleave', onLeave);
+    container.removeEventListener('pointerdown', onDown);
+    container.removeEventListener('pointerup', onUp);
+    container.removeEventListener('pointercancel', onUp);
+    container.style.cursor = '';
+    canvas.remove();
+    try {
+      renderer.dispose();
+    } catch {}
+    api.onFail?.(report.problems.slice());
+  }
 
   const toNdc = (e) => {
     const r = container.getBoundingClientRect();
@@ -923,18 +1030,35 @@ export function createStage(container, { reducedMotion = false } = {}) {
   api.start = (onReady) => {
     let first = true;
     const tick = (now) => {
+      if (failed) return;
       raf = requestAnimationFrame(tick);
       const gap = last ? (now - last) / 1000 : 1 / 60;
       last = now;
+      if (gl.isContextLost()) return; // waiting to hear whether it comes back
       frame(Math.min(gap, 1 / 20));
+      frames++;
+      // check the first frame, the one after any change, and once more a second or two in
+      if (frames === checkAt || frames === 60) {
+        const problems = verify();
+        if (problems.length) trouble(problems);
+        if (failed) return;
+      }
       probe(gap);
-      if (first) {
+      if (first && frames >= checkAt) {
         first = false;
         onReady?.();
       }
     };
     raf = requestAnimationFrame(tick);
   };
+  // what this browser's WebGL turned out to be, for ?debug
+  api.report = () => ({
+    ...report,
+    tier,
+    pixelRatio: renderer.getPixelRatio(),
+    size: `${rtPage.width}x${rtPage.height}`,
+    frames,
+  });
   api.show = show;
   api.setOpen = (on) => toggleOpen(on);
   // Stop everything moving on its own: the disc, the drift and the show. Dragging still turns it.

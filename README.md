@@ -18,7 +18,9 @@ Controls:
 
 Every so often the case opens on its own, stays open a few seconds, and shuts again; not while a song is playing. Until someone interacts, the next song comes in each time it shuts. With "reduce motion" set, it starts out still. A mouse resting over the case holds the show for 2 seconds, in case you're about to click.
 
-The 3D case needs WebGL 2: Safari 15 or later (iOS 15+), and any current Chrome, Edge or Firefox. Where it can't start, the page shows the artwork flat and still plays the songs.
+The 3D case needs WebGL 2: Safari 15 or later (iOS 15+), and any current Chrome, Edge or Firefox. It checks its first frames. If the browser can't draw it (in-app browsers often have less graphics memory, and some phone drivers reject a shader), it tries again lighter, and failing that shows the artwork flat; the songs still play.
+
+To see what a browser could and couldn't do, open **`/music/?debug`**: a panel at the top lists the graphics chip, what the stage tried, and any problems. A screenshot of it is usually enough to tell why a browser shows the artwork flat.
 
 The name in the corner comes from [`music/js/config.js`](music/js/config.js).
 

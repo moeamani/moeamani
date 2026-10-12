@@ -14,6 +14,7 @@ const tool = {
   library: $('[data-tool="library"]'),
 };
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const debugging = new URLSearchParams(location.search).has('debug');
 
 document.title = `Music — ${artist.name}`;
 $('.mx-name').textContent = artist.name;
@@ -33,15 +34,19 @@ async function boot() {
   }
 
   let stage = null;
+  let stageError = null;
   try {
     const { createStage } = await import('./stage.js');
     stage = createStage(stageEl, { reducedMotion });
   } catch (err) {
+    stageError = err;
     console.error(err);
   }
+  if (debugging) debugPanel(stage, stageError);
+
+  // No WebGL, three.js didn't load, or the stage found it can't draw here: the artwork, flat.
   let flat = null;
-  if (!stage) {
-    // no WebGL (or three.js didn't load): show the artwork flat
+  function goFlat() {
     flat = new Image();
     flat.className = 'mx-flat';
     flat.alt = '';
@@ -50,6 +55,7 @@ async function boot() {
     tool.open.hidden = true;
     $('.mx-hint').hidden = true;
   }
+  if (!stage) goFlat();
 
   // each song's artwork, the print it makes on the disc and its dock thumbnail, drawn once
   const looks = new Map();
@@ -133,6 +139,20 @@ async function boot() {
     setPlaying(false);
   });
   audio.addEventListener('loadedmetadata', showTime);
+  // the stage moves the progress along every frame; without it, the audio's own updates do
+  audio.addEventListener('timeupdate', () => !stage && progress());
+
+  function progress() {
+    const bar = thumbs[current];
+    if (!bar) return;
+    if (playing && audio.duration) {
+      bar.dataset.progress = '';
+      bar.style.setProperty('--p', (audio.currentTime / audio.duration).toFixed(4));
+      showTime();
+    } else {
+      delete bar.dataset.progress;
+    }
+  }
 
   function play() {
     const t = tracks[current];
@@ -348,16 +368,61 @@ async function boot() {
   stage.onOpen = showOpen;
   // the case opened and shut on its own: while the songs are taking turns, on to the next
   stage.onShown = () => cycling && select(current + 1, 1);
-  stage.onFrame = () => {
-    const bar = thumbs[current];
-    if (!bar) return;
-    if (playing && audio.duration) {
-      bar.dataset.progress = '';
-      bar.style.setProperty('--p', (audio.currentTime / audio.duration).toFixed(4));
-      showTime();
-    } else {
-      delete bar.dataset.progress;
-    }
+  stage.onFrame = progress;
+  // it started, but this browser can't draw the case after all: show the artwork instead
+  stage.onFail = (problems) => {
+    console.warn(`The CD case can't be drawn here (${problems.join('; ')}). Showing the artwork flat.`);
+    stage = null;
+    cycling = false;
+    goFlat();
+    const t = tracks[current];
+    if (t) look(t).then((l) => tracks[current] === t && l.artwork && (flat.src = l.artwork.toDataURL('image/jpeg', 0.9)));
+    root.dataset.ready = '';
   };
   stage.start(() => (root.dataset.ready = ''));
+}
+
+// --- ?debug ----------------------------------------------------------------------------------
+
+// What this browser could and couldn't do, on screen, so a screenshot from a phone says it all.
+function debugPanel(stage, stageError) {
+  const pre = document.createElement('pre');
+  pre.className = 'mx-debug';
+  document.body.append(pre);
+  const said = [];
+  for (const level of ['error', 'warn']) {
+    const original = console[level];
+    console[level] = (...args) => {
+      said.push(`${level}: ${args.map((a) => (a instanceof Error ? a.message : String(a))).join(' ')}`.slice(0, 300));
+      original.apply(console, args);
+    };
+  }
+  addEventListener('error', (e) => said.push(`error: ${e.message}`));
+  addEventListener('unhandledrejection', (e) => said.push(`rejected: ${e.reason?.message || e.reason}`));
+  let webgl2 = 'yes';
+  if (!stage) {
+    try {
+      webgl2 = document.createElement('canvas').getContext('webgl2') ? 'yes' : 'no';
+    } catch {
+      webgl2 = 'no';
+    }
+  }
+  const render = () => {
+    const r = stage?.report();
+    pre.textContent = [
+      navigator.userAgent,
+      `window ${innerWidth}x${innerHeight} at ${devicePixelRatio}x · WebGL 2: ${webgl2}`,
+      !stage
+        ? `the 3D case never started: ${stageError?.message || 'unknown'}`
+        : `GPU: ${r.gpu}\nfloat targets: ${r.float} · max samples ${r.maxSamples}\n` +
+          `${r.tier ? 'lighter' : 'full'} scene, ${r.size} at ${r.pixelRatio}x · ${r.frames} frames drawn`,
+      ...(r?.problems.length ? ['problems:', ...r.problems.map((x) => `  ${x}`)] : []),
+      document.querySelector('.mx-flat') ? 'showing the artwork flat' : document.querySelector('.mx-canvas') ? 'showing the 3D case' : '',
+      ...said.slice(-10),
+    ]
+      .join('\n')
+      .replace(/[\u0000-\u0008\u000b-\u001f]/g, '');
+  };
+  render();
+  setInterval(render, 1000);
 }
