@@ -1,0 +1,3 @@
+{
+  "redirects": [{ "source": "/music", "destination": "/music/", "permanent": true }]
+}

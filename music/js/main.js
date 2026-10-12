@@ -18,7 +18,7 @@ const debugging = new URLSearchParams(location.search).has('debug');
 
 document.title = `Music — ${artist.name}`;
 $('.mx-name').textContent = artist.name;
-$('.mx-name').href = artist.home || '../';
+$('.mx-name').href = artist.home || '/';
 
 const time = (s) => (Number.isFinite(s) && s >= 0 ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}` : '');
 
