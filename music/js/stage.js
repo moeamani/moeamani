@@ -33,6 +33,7 @@ const SPIN_EASE = 0.9;
 const FIT = 0.6;
 const DOCK_CLEAR = 84;
 const MSAA = 4;
+const RESOLUTION = 2; // render pixels per CSS pixel
 const ROOM_SIZE = 512;
 const STARS = 1.6;
 const STAR_THRESHOLD = 2.0;
@@ -229,7 +230,11 @@ export function createStage(container, { reducedMotion = false } = {}) {
     canvas.remove();
     throw err;
   }
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  // Two pixels per CSS pixel on every screen, not the screen's own ratio: on a 1x or 1.25x display
+  // (most Windows PCs) the plastic's fine edges and refractions would otherwise get one pixel each
+  // and come out jagged. The browser shrinks the canvas to fit, averaging each 2x2, which is the
+  // same supersampling a Retina screen gets for free. A GPU that can't keep up is turned down below.
+  renderer.setPixelRatio(RESOLUTION);
   renderer.autoClear = false;
   renderer.setClearColor(0xffffff, 0);
   const gl = renderer.getContext();
