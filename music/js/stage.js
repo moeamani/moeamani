@@ -37,9 +37,11 @@ const ROOM_SIZE = 512;
 const STARS = 1.6;
 const STAR_THRESHOLD = 2.0;
 
-const REST = 2.6;
-const AGAIN = 5.5;
-const OPEN_HOLD = 0.25;
+// the show: how long the case rests before it opens on its own, the first time and after that, and
+// how long it stays open (seconds)
+const REST = 4;
+const AGAIN = 10;
+const OPEN_HOLD = 3;
 
 const GRAB_RATE = 0.008;
 const GRAB_YAW = 0.9;
@@ -485,6 +487,7 @@ export function createStage(container, { reducedMotion = false } = {}) {
     spinRate: SPIN,
     open: false,
     still: false,
+    playing: false,
   };
   let slide = null; // { t, dir, from, pose }: the last song's case making way
   let pose = null; // the current case's pose last frame
@@ -714,9 +717,10 @@ export function createStage(container, { reducedMotion = false } = {}) {
     draw();
   }
 
-  // movement stopped: the disc winds down, the case stops drifting and the show stops
+  // movement stopped: the disc winds down, the case stops drifting and the show stops. While a
+  // song plays, the show waits too: the lid stays as it is.
   const getSpin = () => !st.still;
-  const getPaused = () => st.still;
+  const getPaused = () => st.still || st.playing;
 
   const _c = new THREE.Vector3();
   function caseRect(w, h) {
@@ -928,6 +932,9 @@ export function createStage(container, { reducedMotion = false } = {}) {
   // Stop everything moving on its own: the disc, the drift and the show. Dragging still turns it.
   api.setStill = (still) => {
     st.still = still;
+  };
+  api.setPlaying = (playing) => {
+    st.playing = playing;
   };
   Object.defineProperty(api, 'open', { get: () => st.phase === 'opening' || st.phase === 'open' });
   return api;

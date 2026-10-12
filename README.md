@@ -16,7 +16,7 @@ Controls:
 - The turning-disc button stops all movement: the disc, the drift, and the case opening on its own.
 - Keys: ←/→ switch songs, O opens the case, S stops movement, P or Space plays.
 
-Every few seconds the case opens and shuts on its own. Until someone interacts, the next song comes in each time it does. With "reduce motion" set, it starts out still. Without WebGL, it shows the artwork flat.
+Every so often the case opens on its own, stays open a few seconds, and shuts again; not while a song is playing. Until someone interacts, the next song comes in each time it shuts. With "reduce motion" set, it starts out still. Without WebGL, it shows the artwork flat.
 
 The name in the corner comes from [`music/js/config.js`](music/js/config.js).
 

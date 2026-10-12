@@ -107,6 +107,7 @@ async function boot() {
 
   const setPlaying = (on) => {
     playing = on;
+    stage?.setPlaying(on); // the case doesn't open or shut on its own while a song plays
     tool.play.setAttribute('aria-pressed', String(on));
     tool.play.setAttribute('aria-label', on ? 'Pause' : 'Play');
     showTime();
