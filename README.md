@@ -3,7 +3,7 @@
 Personal portfolio site, live at **https://moeamani.vercel.app** (music at `/music/`). The pages are plain HTML, CSS and JavaScript with no build step. A small API keeps the music in Vercel Blob storage. Every push to the repo's default branch deploys to production.
 
 - `index.html`: home page (a placeholder for now; links to Music)
-- `music/`: the music page. Every song is a disc in its own clear CD case, [Ann Nguyen's CD Case](https://github.com/annnguyentt/vibe-coding/tree/main/cd-case). You can open the case, turn it in your hand (let go and it springs back), and play the song right there on the page.
+- `music/`: the music page. Every song is a disc in its own clear CD case. You can open the case, turn it in your hand (let go and it springs back), and play the song right there on the page.
 - `api/`: the music library. It lists the songs for visitors and handles uploads, which need a password.
 
 ## The music page
@@ -56,5 +56,3 @@ The CD case is **Ann Nguyen**'s ([@ann_nnng](https://x.com/ann_nnng)) [CD Case](
 - [`music/js/case-geometry.js`](music/js/case-geometry.js): her case geometry, unchanged.
 - [`music/js/shaders.js`](music/js/shaders.js): her shaders, unchanged except that the backdrop catches the shadows of two cases.
 - [`music/js/stage.js`](music/js/stage.js): her stage, taken out of React. Added here: a second case, so one song's case can make way for the next; a disc printed with each song's artwork; and the stop-movement switch.
-
-The page credits her in its corner, the way hers does.
