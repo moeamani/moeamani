@@ -1,5 +1,5 @@
 // The track list.
-//   GET                          anyone: the songs on the page, newest first
+//   GET                          anyone: the songs, newest first, and the playlists
 //   POST   { track }             add a song whose files are already uploaded
 //   PATCH  { order: [ids] }      put the songs in this order
 //   PATCH  { id, title }         rename one
@@ -11,9 +11,9 @@ import { cleanTrack, editTitle, failed, guard, readTracks, writeTracks } from '.
 
 export async function GET() {
   try {
-    const { tracks } = await readTracks();
+    const { tracks, playlists } = await readTracks();
     return Response.json(
-      { tracks },
+      { tracks, playlists },
       // visitors get the CDN's copy (at most about a minute old); the owner's page asks with
       // ?fresh=…, which skips it
       { headers: { 'cache-control': 'public, max-age=0, s-maxage=30, stale-while-revalidate=30' } },
@@ -34,12 +34,12 @@ export async function POST(request) {
     } catch (err) {
       return Response.json({ error: err.message }, { status: 400 });
     }
-    const { tracks, versions } = await readTracks();
+    const { tracks, playlists, versions } = await readTracks();
     if (tracks.some((t) => t.id === track.id)) {
       return Response.json({ error: 'That song is already in the library.' }, { status: 409 });
     }
     const next = [track, ...tracks];
-    await writeTracks(next, versions);
+    await writeTracks(next, versions, playlists);
     return Response.json({ track, tracks: next }, { status: 201 });
   } catch (err) {
     return failed(err);
@@ -51,7 +51,7 @@ export async function PATCH(request) {
   if (refused) return refused;
   try {
     const body = await request.json().catch(() => ({}));
-    const { tracks, versions } = await readTracks();
+    const { tracks, playlists, versions } = await readTracks();
     let next;
     if (Array.isArray(body.order)) {
       const byId = new Map(tracks.map((t) => [t.id, t]));
@@ -64,7 +64,7 @@ export async function PATCH(request) {
     } else {
       return Response.json({ error: 'Send an order, or an id and a title.' }, { status: 400 });
     }
-    await writeTracks(next, versions);
+    await writeTracks(next, versions, playlists);
     return Response.json({ tracks: next });
   } catch (err) {
     return failed(err);
@@ -76,11 +76,11 @@ export async function DELETE(request) {
   if (refused) return refused;
   try {
     const id = new URL(request.url).searchParams.get('id');
-    const { tracks, versions } = await readTracks();
+    const { tracks, playlists, versions } = await readTracks();
     const gone = tracks.find((t) => t.id === id);
     if (!gone) return Response.json({ error: 'No such song.' }, { status: 404 });
     const next = tracks.filter((t) => t !== gone);
-    await writeTracks(next, versions);
+    await writeTracks(next, versions, playlists); // and out of every playlist
     await del([gone.audio, gone.cover].filter(Boolean)).catch((err) => console.warn('Left files behind:', err));
     return Response.json({ tracks: next });
   } catch (err) {

@@ -55,6 +55,21 @@ export const removeTrack = (id, key) => call('DELETE', `/api/tracks?id=${encodeU
 export const reorderTracks = (ids, key) => call('PATCH', '/api/tracks', key, { order: ids }).then((d) => d.tracks);
 export const renameTrack = (id, title, key) => call('PATCH', '/api/tracks', key, { id, title }).then((d) => d.tracks);
 
+// --- playlists ------------------------------------------------------------------------------
+
+// The songs and the playlists together: { tracks, playlists }
+export async function loadLibrary({ fresh = false } = {}) {
+  const res = await fetch(`/api/tracks${fresh ? `?fresh=${Date.now()}` : ''}`, { headers: { accept: 'application/json' } });
+  if (!res.ok) throw new Error(`The library answered ${res.status}.`);
+  const data = await res.json();
+  return { tracks: Array.isArray(data.tracks) ? data.tracks : [], playlists: Array.isArray(data.playlists) ? data.playlists : [] };
+}
+
+export const createPlaylist = (name, tracks, key) => call('POST', '/api/playlists', key, { playlist: { name, tracks } }).then((d) => d.playlists);
+export const updatePlaylist = (id, change, key) => call('PATCH', '/api/playlists', key, { id, ...change }).then((d) => d.playlists);
+export const reorderPlaylists = (ids, key) => call('PATCH', '/api/playlists', key, { order: ids }).then((d) => d.playlists);
+export const deletePlaylist = (id, key) => call('DELETE', `/api/playlists?id=${encodeURIComponent(id)}`, key).then((d) => d.playlists);
+
 // --- publishing a song ---------------------------------------------------------------------
 
 const TYPES = {

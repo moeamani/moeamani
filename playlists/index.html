@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Playlists — M/ODE</title>
+    <meta name="description" content="Playlists by M/ODE, on a pocket music player you can hold: scroll the wheel, choose a playlist, play it." />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="color-scheme" content="light" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400..700&display=swap" />
+    <link rel="stylesheet" href="/music/style.css" />
+    <link rel="stylesheet" href="/playlists/style.css" />
+    <script type="module" src="/playlists/js/main.js"></script>
+  </head>
+  <body>
+    <main class="mx pl">
+      <h1 class="sr-only">Playlists</h1>
+      <div class="mx-stage"></div>
+
+      <header class="mx-corner">
+        <nav class="mx-tag mx-pages" aria-label="Pages"><a href="/music/">Music</a><a href="/playlists/" aria-current="page">Playlists</a></nav>
+        <a class="mx-name" href="/">M/ODE</a>
+      </header>
+
+      <p class="mx-hint" aria-hidden="true">Drag round the wheel to scroll · press the middle to choose · MENU goes back</p>
+
+      <button type="button" class="mx-tool pl-library" data-tool="library" aria-label="Library" title="Library" hidden>
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 15V4.5M7.5 9 12 4.5 16.5 9" />
+          <path d="M4.5 14.5v3a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3" />
+        </svg>
+      </button>
+
+      <p class="sr-only" aria-live="polite" id="mx-live"></p>
+      <noscript><p class="mx-fail">This page needs JavaScript to play the music.</p></noscript>
+    </main>
+  </body>
+</html>

@@ -3,8 +3,8 @@
 // The library lives in Vercel Blob:
 //   library/<id>/audio-….<ext>   each song, uploaded straight from the browser
 //   library/<id>/cover-….jpg     its artwork, taken from the song's tags
-//   library/index-….json         the track list, rewritten under a new name on every change
-//                                (so no CDN ever serves an old one) and the old copies deleted
+//   library/index-….json         the track list and the playlists, rewritten under a new name on
+//                                every change (so no CDN ever serves an old one), old copies deleted
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { del, list, put } from '@vercel/blob';
@@ -13,16 +13,26 @@ const INDEX = 'library/index';
 
 export async function readTracks() {
   const { blobs } = await list({ prefix: INDEX, limit: 1000 });
-  if (!blobs.length) return { tracks: [], versions: [] };
+  if (!blobs.length) return { tracks: [], playlists: [], versions: [] };
   blobs.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
   const res = await fetch(blobs[0].url, { cache: 'no-store' });
   if (!res.ok) throw new Error(`Couldn't read the track list (${res.status}).`);
   const data = await res.json();
-  return { tracks: Array.isArray(data.tracks) ? data.tracks : [], versions: blobs };
+  return {
+    tracks: Array.isArray(data.tracks) ? data.tracks : [],
+    playlists: Array.isArray(data.playlists) ? data.playlists : [],
+    versions: blobs,
+  };
 }
 
-export async function writeTracks(tracks, versions) {
-  await put(`${INDEX}.json`, JSON.stringify({ tracks, updated: new Date().toISOString() }), {
+// Writes the whole library. Every change goes through here, so pass the playlists along with the
+// tracks: what's left out is gone.
+export async function writeTracks(tracks, versions, playlists) {
+  if (!Array.isArray(playlists)) throw new Error('writeTracks needs the playlists too.');
+  // a playlist only ever holds songs that are in the library
+  const known = new Set(tracks.map((t) => t.id));
+  playlists = playlists.map((p) => ({ ...p, tracks: (p.tracks || []).filter((id) => known.has(id)) }));
+  await put(`${INDEX}.json`, JSON.stringify({ tracks, playlists, updated: new Date().toISOString() }), {
     access: 'public',
     addRandomSuffix: true,
     contentType: 'application/json',
@@ -76,7 +86,7 @@ export function cleanTrack(t) {
   if (!audio) throw new Error('The audio has to be a file in this library.');
   const cover = t.cover ? libraryUrl(t.cover) : null;
   if (t.cover && !cover) throw new Error('The artwork has to be a file in this library.');
-  const id = ID.test(t.id) ? t.id : randomBytes(6).toString('hex');
+  const id = typeof t.id === 'string' && ID.test(t.id) ? t.id : randomBytes(6).toString('hex');
   const duration = Number(t.duration);
   return {
     id,
@@ -93,6 +103,16 @@ export function cleanTrack(t) {
 
 export function editTitle(value) {
   return text(value) || 'Untitled';
+}
+
+// A playlist: a name and the ids of its songs, in order, each song at most once.
+export function cleanPlaylist(p, known) {
+  const ids = Array.isArray(p.tracks) ? p.tracks : [];
+  return {
+    id: typeof p.id === 'string' && ID.test(p.id) ? p.id : randomBytes(6).toString('hex'),
+    name: text(p.name, 80) || 'Untitled Playlist',
+    tracks: [...new Set(ids.filter((id) => typeof id === 'string' && known.has(id)))].slice(0, 2000),
+  };
 }
 
 export function failed(err) {

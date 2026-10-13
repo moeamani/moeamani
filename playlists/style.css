@@ -1,0 +1,94 @@
+/* The playlists page: the music page's styles (/music/style.css), and these. */
+
+/* the hint sits where the music page's dock would be, wrapping on a phone */
+.pl .mx-hint {
+  bottom: max(28px, env(safe-area-inset-bottom));
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  white-space: normal;
+  text-align: center;
+  line-height: 1.4;
+}
+
+/* the owner's library button, on its own in the corner */
+.pl-library {
+  position: absolute;
+  right: var(--right);
+  bottom: max(18px, env(safe-area-inset-bottom));
+  z-index: 2;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--faint);
+  box-shadow: 0 10px 30px -12px rgba(17, 17, 20, 0.18);
+}
+
+/* no WebGL: the screen alone */
+.pl-flat {
+  position: absolute;
+  left: 50%;
+  top: calc(50% - 20px);
+  width: min(86vw, 480px);
+  height: auto;
+  aspect-ratio: 5 / 4;
+  transform: translate(-50%, -50%);
+  image-rendering: pixelated;
+  border-radius: 6px;
+  box-shadow: 0 0 0 10px #f2f2ef, 0 0 0 11px var(--faint), 0 30px 60px -30px rgba(17, 17, 20, 0.45);
+}
+
+/* --- the playlist editor --------------------------------------------------------------- */
+
+.pl-new {
+  display: flex;
+  gap: 8px;
+}
+
+.pl-new input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 14px;
+  padding: 8px 10px;
+  border: 1px solid var(--faint);
+  border-radius: 10px;
+}
+
+.pl-row .mx-row-text input {
+  font-weight: 600;
+}
+
+.pl-songs {
+  list-style: none;
+  margin: -4px 0 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(17, 17, 20, 0.035);
+}
+
+.pl-songs ol,
+.pl-songs ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pl-song {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.pl-song-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pl-label {
+  margin: 12px 0 4px;
+  font-size: 12px;
+  color: var(--soft);
+}

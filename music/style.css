@@ -124,6 +124,34 @@ body {
   color: var(--soft);
 }
 
+/* the pages, in the corner: Music · Playlists */
+.mx-pages {
+  display: flex;
+  gap: 0;
+}
+
+.mx-pages a {
+  color: var(--soft);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.mx-pages a + a::before {
+  content: "·";
+  margin: 0 6px;
+  color: var(--soft);
+}
+
+.mx-pages a:hover,
+.mx-pages a[aria-current="page"] {
+  color: var(--ink);
+}
+
+.mx-pages a:focus-visible {
+  outline: 1px solid var(--ink);
+  outline-offset: 2px;
+}
+
 .mx-name {
   font-size: 18px;
   font-weight: 700;

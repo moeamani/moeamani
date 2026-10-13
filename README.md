@@ -4,7 +4,8 @@ Personal portfolio site, live at **https://moeamani.vercel.app** (music at `/mus
 
 - `index.html`: home page (a placeholder for now; links to Music)
 - `music/`: the music page. Every song is a disc in its own clear CD case. You can open the case, turn it in your hand (let go and it springs back), and play the song right there on the page.
-- `api/`: the music library. It lists the songs for visitors and handles uploads, which need a password.
+- `playlists/`: the playlists page. The same songs on a pocket music player you can hold, modelled on the mid-2000s kind with a touch wheel, with no names or marks on it.
+- `api/`: the music library. It lists the songs and playlists for visitors and handles changes, which need a password.
 
 ## The music page
 
@@ -23,6 +24,20 @@ The 3D case needs WebGL 2: Safari 15 or later (iOS 15+), and any current Chrome,
 To see what a browser could and couldn't do, open **`/music/?debug`**: a panel at the top lists the graphics chip, the resolution it draws at, and any errors.
 
 The name in the corner comes from [`music/js/config.js`](music/js/config.js).
+
+## The playlists page
+
+A 3D player in the same white studio as the music page: a white front, a mirror-polished back, a greyscale screen and a touch wheel. It works like the real thing.
+
+- Drag round the wheel to scroll; press the middle to choose. MENU (top of the wheel) goes back, the bottom plays and pauses, left and right skip, and holding left or right seeks.
+- Main menu: Playlists, Music (Artists, Albums, Songs), Shuffle Songs, Settings (Shuffle, Repeat, Backlight, Clicker, Headphones, About), and Now Playing once something's on.
+- On Now Playing the wheel sets the volume; the middle button steps through scrubbing (the wheel seeks), the album art, and back.
+- The hold switch on top (or L) locks the controls. Drag the body to turn it over; let go and it comes back.
+- Keys: ↑/↓ scroll, Enter chooses, Esc or M goes back, Space or P plays, ←/→ skip (hold to seek), H plugs headphones in or out, L is hold.
+
+**Headphones.** When the computer's sound moves to headphones (a jack, USB or Bluetooth), a headphone plug comes down onto the player, slows as it nears, hovers, and clicks into the socket with a sound to match; when they're taken out it pulls out again, and the music pauses, like the real thing. Browsers only name sound devices once a site may use the microphone, so this is switched on in Settings → Headphones: that asks for the microphone once and closes it straight away (nothing is recorded). Chrome and Edge support it; Safari doesn't list sound outputs to web pages, so there it says Not Available. H shows the animation anywhere.
+
+**Making playlists.** On a device with the upload password, the Library button (bottom right, or `/playlists/#upload`) opens the playlist editor: make, rename, reorder and delete playlists, and add or remove their songs. Its link opens the music page's song library, to upload songs. Deleting a song from the library takes it out of every playlist.
 
 ## Adding music
 
