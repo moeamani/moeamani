@@ -37,6 +37,10 @@ const MSAA = 4;
 // MacBook's full window; a big 1x monitor at 2x would be three times it, and that was too slow.
 const PIXEL_BUDGET = 6.5e6;
 const LOW_DENSITY_RATIO = 1.5; // what a 1x or 1.25x screen is drawn at
+// The scene is drawn in eight passes, light traced through every rod: many times the work of an
+// ordinary three.js scene. Before it shows, it's timed on this GPU and drawn as finely as fits:
+const FRAME_BUDGET_MS = 12; // a frame, with room to spare inside a 60Hz refresh
+const MIN_FRAME_MS = 13; // and no more than ~60-75 frames a second, however fast the monitor
 const ROOM_SIZE = 512;
 const STARS = 1.6;
 const STAR_THRESHOLD = 2.0;
@@ -200,7 +204,7 @@ function sway(t, motion) {
 }
 
 // Throws when WebGL won't start, so the page can show the artwork flat instead.
-export function createStage(container, { reducedMotion = false } = {}) {
+export function createStage(container, { reducedMotion = false, calibrate = true } = {}) {
   const motion = reducedMotion ? 0.35 : 1;
   // what the page hears from the stage
   const api = {
@@ -251,6 +255,7 @@ export function createStage(container, { reducedMotion = false } = {}) {
     float: renderer.extensions.has('EXT_color_buffer_float') ? 'float' : hdr ? 'half float' : 'none',
     maxSamples: gl.getParameter(gl.MAX_SAMPLES),
     problems: [],
+    timing: [], // what fit() measured
   };
   const shaderErrors = [];
   renderer.debug.onShaderError = (gl, program, vertex, fragment) => {
@@ -868,6 +873,7 @@ export function createStage(container, { reducedMotion = false } = {}) {
   // at 2x there costs too much on a big monitor. So instead, at low density: the page (wall and
   // disc) gets 4x multisampling like the glass has, and each pixel of plastic traces 4 rays, not 2.
   let pageAA = false;
+  let lowDensity = false;
   let smooth = true; // turned off if even that is too slow
   // Multisampling averages light before it's clipped to white, so an edge pixel with one of its
   // samples on a lamp (up to 24x white) still averages to over white: a hard white speck. Capping
@@ -876,8 +882,10 @@ export function createStage(container, { reducedMotion = false } = {}) {
   function sharpen(low) {
     // drawn at 1.5x, the extra pixels smooth the disc and the rays; turned down to 1x, they can't
     const coarseRender = low && renderer.getPixelRatio() < LOW_DENSITY_RATIO;
-    rodSamples.value = coarse ? 1 : coarseRender ? 4 : 2;
-    ceiling.value = low ? 1 : 1e4;
+    // drawn at 1.5x, one ray a pixel is enough (2.25 render pixels each); at 1x, four
+    // (and with the smoothing given up, one: the lightest it goes)
+    rodSamples.value = coarse ? 1 : coarseRender ? 4 : lowDensity ? 1 : 2;
+    ceiling.value = lowDensity ? 1 : 1e4; // costs nothing, so it stays
     if (coarseRender === pageAA) return;
     pageAA = coarseRender;
     rtPage.dispose();
@@ -893,6 +901,7 @@ export function createStage(container, { reducedMotion = false } = {}) {
     // changes faster than one pixel can show, and only more pixels smooth that
     const dpr = window.devicePixelRatio || 1;
     const low = dpr < 1.5;
+    lowDensity = low;
     const want = low ? LOW_DENSITY_RATIO : Math.min(dpr, 2);
     const natural = Math.max(1, Math.min(want, Math.sqrt(PIXEL_BUDGET / (w * h))));
     renderer.setPixelRatio(Math.min(natural, ratioCap));
@@ -1086,7 +1095,8 @@ export function createStage(container, { reducedMotion = false } = {}) {
       }
       return;
     }
-    ratioCap = Math.max(1, Math.min(ratio - 0.25, Math.round(ratio * Math.sqrt(1 / 45 / typical) * 4) / 4));
+    // frames are coming slower than 45 a second: scale the pixels by how far off that is
+    ratioCap = Math.min(slower(ratio, (typical * 1000 * FRAME_BUDGET_MS) / (1000 / 45)), ratio - 0.25);
     layout();
   };
 
@@ -1112,6 +1122,45 @@ export function createStage(container, { reducedMotion = false } = {}) {
     return Promise.all(jobs);
   }
 
+  // How long does this GPU take over a frame? Timed while the canvas is still hidden, each frame
+  // waited out to the end (reading back one pixel), so the first frames anyone sees are already
+  // at a resolution that keeps up, rather than slow for the seconds the frame-rate probe needs.
+  // A coarser resolution for a frame that took `ms`: cost goes with the pixel count. A low-density
+  // screen goes straight from 1.5x to 1x, where it gets its own smoothing; in between it would get
+  // neither the pixels nor the smoothing.
+  function slower(ratio, ms) {
+    if (lowDensity) return 1;
+    return Math.max(1, Math.floor(ratio * Math.sqrt(FRAME_BUDGET_MS / ms) * 4) / 4);
+  }
+
+  function fit() {
+    const px = new Uint8Array(4);
+    const time = () => {
+      const ms = [];
+      for (let i = 0; i < 5; i++) {
+        const t0 = performance.now();
+        frame(1 / 60);
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        ms.push(performance.now() - t0);
+      }
+      return ms.slice(1).sort((a, b) => a - b)[1]; // the first frame still uploads things
+    };
+    for (let round = 0; round < 3; round++) {
+      const ms = time();
+      report.timing.push(`${renderer.getPixelRatio()}x${pageAA ? '+aa' : ''}: ${ms.toFixed(1)}ms`);
+      if (ms <= FRAME_BUDGET_MS) return;
+      const ratio = renderer.getPixelRatio();
+      if (ratio > 1) {
+        ratioCap = slower(ratio, ms);
+      } else if (smooth) {
+        smooth = false; // 1x and still slow: no extra smoothing either
+      } else {
+        return; // as light as it goes
+      }
+      layout();
+    }
+  }
+
   api.start = async (onReady) => {
     try {
       await warm();
@@ -1120,10 +1169,12 @@ export function createStage(container, { reducedMotion = false } = {}) {
     }
     if (failed) return;
     bakeRoom();
+    if (calibrate) fit();
     let first = true;
     const tick = (now) => {
       if (failed) return;
       raf = requestAnimationFrame(tick);
+      if (last && now - last < MIN_FRAME_MS) return; // a 120Hz+ monitor: every other refresh is enough
       const gap = last ? (now - last) / 1000 : 1 / 60;
       last = now;
       if (gl.isContextLost()) return; // waiting to hear whether it comes back
