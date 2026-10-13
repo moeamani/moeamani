@@ -16,6 +16,9 @@ const tool = {
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const debugging = new URLSearchParams(location.search).has('debug');
 
+const CYCLE = 7; // seconds on each song while nobody's touched anything
+const CYCLE_OPEN = 2.2; // when, in that, the case opens
+
 document.title = `Music — ${artist.name}`;
 $('.mx-name').textContent = artist.name;
 $('.mx-name').href = artist.home || '/';
@@ -39,9 +42,8 @@ async function boot() {
   let stage = null;
   let stageError = null;
   try {
-    const { createStage } = await loadingStage;
-    // ?quality=full skips timing the GPU and draws as designed for the screen (for comparing looks)
-    stage = createStage(stageEl, { reducedMotion, calibrate: new URLSearchParams(location.search).get('quality') !== 'full' });
+    const { Stage } = await loadingStage;
+    stage = new Stage(stageEl, { reducedMotion });
   } catch (err) {
     stageError = err;
     console.error(err);
@@ -51,7 +53,7 @@ async function boot() {
     window.mxStage = stage; // for poking at from the console
   }
 
-  // No WebGL, three.js didn't load, or the stage found it can't draw here: the artwork, flat.
+  // No WebGL, or three.js didn't load: the artwork, flat.
   let flat = null;
   function goFlat() {
     flat = new Image();
@@ -89,6 +91,8 @@ async function boot() {
 
   let current = -1;
   let cycling = false; // until someone does something, the songs take turns
+  let cycleT = 0;
+  let cycleOpened = false;
   let thumbs = [];
 
   // --- the dock ---
@@ -126,7 +130,6 @@ async function boot() {
 
   const setPlaying = (on) => {
     playing = on;
-    stage?.setPlaying(on); // the case doesn't open or shut on its own while a song plays
     tool.play.setAttribute('aria-pressed', String(on));
     tool.play.setAttribute('aria-label', on ? 'Pause' : 'Play');
     showTime();
@@ -207,6 +210,9 @@ async function boot() {
     stopAudio();
     current = i;
     const t = tracks[i];
+    cycleT = 0;
+    cycleOpened = false;
+    if (direction) setOpen(false);
 
     thumbs.forEach((b, k) => {
       b.setAttribute('aria-current', String(k === i));
@@ -279,8 +285,8 @@ async function boot() {
 
   // --- the tools ---
 
-  // the case opens on its own too, now and then: the button follows it
-  function showOpen(open) {
+  function setOpen(open) {
+    stage?.setOpen(open);
     tool.open.setAttribute('aria-pressed', String(open));
     tool.open.setAttribute('aria-label', open ? 'Close the case' : 'Open the case');
   }
@@ -292,12 +298,14 @@ async function boot() {
   }
 
   function stopCycle() {
+    if (!cycling) return;
     cycling = false;
+    if (!playing) delete thumbs[current]?.dataset.progress;
   }
 
   const toggleOpen = () => {
     stopCycle();
-    stage.setOpen(!stage.open);
+    setOpen(!stage.open);
   };
   const toggleStill = () => setStill(tool.still.getAttribute('aria-pressed') !== 'true');
   const togglePlay = () => (playing ? audio.pause() : play());
@@ -360,7 +368,7 @@ async function boot() {
 
   buildDock();
   setStill(reducedMotion);
-  showOpen(false);
+  setOpen(false);
   setPlaying(false);
   if (tracks.length) select(0);
   else empty();
@@ -374,19 +382,18 @@ async function boot() {
 
   stage.onTap = toggleOpen;
   stage.onInteract = stopCycle;
-  stage.onOpen = showOpen;
-  // the case opened and shut on its own: while the songs are taking turns, on to the next
-  stage.onShown = () => cycling && select(current + 1, 1);
-  stage.onFrame = progress;
-  // it started, but this browser can't draw the case after all: show the artwork instead
-  stage.onFail = (problems) => {
-    console.warn(`The CD case can't be drawn here (${problems.join('; ')}). Showing the artwork flat.`);
-    stage = null;
-    cycling = false;
-    goFlat();
-    const t = tracks[current];
-    if (t) look(t).then((l) => tracks[current] === t && l.artwork && (flat.src = l.artwork.toDataURL('image/jpeg', 0.9)));
-    root.dataset.ready = '';
+  stage.onFrame = (dt) => {
+    const bar = thumbs[current];
+    if (playing || !cycling || !bar) return progress();
+    // songs taking turns: the case opens a little way in, and the next one comes after
+    cycleT += dt;
+    if (cycleT > CYCLE_OPEN && !cycleOpened) {
+      cycleOpened = true;
+      setOpen(true);
+    }
+    if (cycleT >= CYCLE) select(current + 1, 1);
+    thumbs[current].dataset.progress = '';
+    thumbs[current].style.setProperty('--p', Math.min(cycleT / CYCLE, 1).toFixed(4));
   };
   stage.start(() => (root.dataset.ready = ''));
 }
@@ -423,9 +430,7 @@ function debugPanel(stage, stageError) {
       `window ${innerWidth}x${innerHeight} at ${devicePixelRatio}x · WebGL 2: ${webgl2}`,
       !stage
         ? `the 3D case never started: ${stageError?.message || 'unknown'}`
-        : `GPU: ${r.gpu}\nfloat targets: ${r.float} · max samples ${r.maxSamples}\n` +
-          `${r.tier ? 'lighter' : 'full'} scene, ${r.size} at ${r.pixelRatio}x · ${r.frames} frames drawn\n${r.smoothing}\ntimed: ${r.timing.join(' → ') || 'not timed'}`,
-      ...(r?.problems.length ? ['problems:', ...r.problems.map((x) => `  ${x}`)] : []),
+        : Object.entries(r).map(([k, v]) => `${k}: ${v}`).join('\n'),
       document.querySelector('.mx-flat') ? 'showing the artwork flat' : document.querySelector('.mx-canvas') ? 'showing the 3D case' : '',
       ...said.slice(-10),
     ]

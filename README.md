@@ -18,9 +18,9 @@ Controls:
 
 Every so often the case opens on its own, stays open a few seconds, and shuts again; not while a song is playing. Until someone interacts, the next song comes in each time it shuts. With "reduce motion" set, it starts out still. A mouse resting over the case holds the show for 2 seconds, in case you're about to click.
 
-The 3D case needs WebGL 2: Safari 15 or later (iOS 15+), and any current Chrome, Edge or Firefox. It checks its first frames. If the browser can't draw it (in-app browsers often have less graphics memory, and some phone drivers reject a shader), it tries again lighter, and failing that shows the artwork flat; the songs still play.
+The 3D case needs WebGL 2: Safari 15 or later (iOS 15+), and any current Chrome, Edge or Firefox. Where it can't start, the page shows the artwork flat; the songs still play.
 
-To see what a browser could and couldn't do, open **`/music/?debug`**: a panel at the top lists the graphics chip, what the stage tried, and any problems. A screenshot of it is usually enough to tell why a browser shows the artwork flat.
+To see what a browser could and couldn't do, open **`/music/?debug`**: a panel at the top lists the graphics chip, the resolution it draws at, and any errors.
 
 The name in the corner comes from [`music/js/config.js`](music/js/config.js).
 
@@ -55,8 +55,6 @@ A plain static server (`python3 -m http.server`) shows the page too, but with no
 
 ## Credit
 
-The CD case is **Ann Nguyen**'s ([@ann_nnng](https://x.com/ann_nnng)) [CD Case](https://github.com/annnguyentt/vibe-coding/tree/main/cd-case), vibe-coded with [TypingMind](https://typingmind.com). Her source is published for anyone to use with credit.
+The CD case's model (the tray, the lid and the hinge) is **Ann Nguyen**'s ([@ann_nnng](https://x.com/ann_nnng)), from her [CD Case](https://github.com/annnguyentt/vibe-coding/tree/main/cd-case), vibe-coded with [TypingMind](https://typingmind.com). Her source is published for anyone to use with credit.
 
-- [`music/js/case-geometry.js`](music/js/case-geometry.js): her case geometry, unchanged.
-- [`music/js/shaders.js`](music/js/shaders.js): her shaders, unchanged except that the backdrop catches the shadows of two cases.
-- [`music/js/stage.js`](music/js/stage.js): her stage, taken out of React. Added here: a second case, so one song's case can make way for the next; a disc printed with each song's artwork; and the stop-movement switch.
+- [`music/js/case-geometry.js`](music/js/case-geometry.js): her case geometry, unchanged. [`music/js/case.js`](music/js/case.js) puts it together with this page's own disc, and this page's renderer and plastics draw it.

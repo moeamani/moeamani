@@ -1,1218 +1,351 @@
 import * as THREE from './three.js';
-import { CASE, HALF, HINGE, discGeometry, lidGeometry, trayGeometry } from './case-geometry.js';
-import {
-  BACKDROP_FRAG,
-  BACKDROP_VERT,
-  BRIGHT_FRAG,
-  COPY_FRAG,
-  DISC_FRAG,
-  DISC_VERT,
-  FINAL_FRAG,
-  ROD_FRAG,
-  ROD_VERT,
-  ROOM_BAKE_FRAG,
-  SCREEN_VERT,
-  SHEET_FRAG,
-  SHEET_VERT,
-  STREAK_FRAG,
-} from './shaders.js';
+import { JewelCase, W, H } from './case.js';
+import { studioEnvironment } from './studio.js';
 
-// The scene, its light and how the case moves are Ann Nguyen's CD Case
-// (https://github.com/annnguyentt/vibe-coding/tree/main/cd-case, CaseStage.js), taken out of React.
-// Added for the music: a second case, so one song's case can make way for the next; a disc printed
-// with each song's artwork; and a switch that stops everything moving on its own.
-
-const FOV = 28;
-const IOR = 1.59;
-const ABSORB = [0.0042, 0.003, 0.0026];
-const DEPTH = 14;
-const BACKDROP_Z = -70;
-const LIGHT = new THREE.Vector3(-0.3, 0.48, 1).normalize();
-const SPIN = THREE.MathUtils.degToRad(18);
-const SPIN_EASE = 0.9;
-const FIT = 0.6;
-const DOCK_CLEAR = 84;
-const MSAA = 4;
-// Render pixels: the screen's own density (to 2x), within this many pixels in all. About a 15" Retina
-// MacBook's full window; a big 1x monitor at 2x would be three times it, and that was too slow.
-const PIXEL_BUDGET = 6.5e6;
-const LOW_DENSITY_RATIO = 1.5; // what a 1x or 1.25x screen is drawn at
-// The scene is drawn in eight passes, light traced through every rod: many times the work of an
-// ordinary three.js scene. Before it shows, it's timed on this GPU and drawn as finely as fits:
-const FRAME_BUDGET_MS = 12; // a frame, with room to spare inside a 60Hz refresh
-const MIN_FRAME_MS = 13; // and no more than ~60-75 frames a second, however fast the monitor
-const ROOM_SIZE = 512;
-const STARS = 1.6;
-const STAR_THRESHOLD = 2.0;
-
-// the show: how long the case rests before it opens on its own, the first time and after that, and
-// how long it stays open (seconds)
-const REST = 4;
-const AGAIN = 10;
-const OPEN_HOLD = 3;
-
-const GRAB_RATE = 0.008;
-const GRAB_YAW = 0.9;
-const GRAB_TILT = 0.45;
-const GRAB_K = 16;
-const GRAB_C = 5.5;
-const TAP_SLOP = 6;
-const TOUCH_SLOP = 14; // a fingertip wanders further than a mouse while it taps
-const HOVER_HOLD = 2; // seconds a pointer resting over the case keeps it from opening on its own
-
-// where the print starts and stops on the disc, in millimetres from the middle
-const ART_IN = 16.2;
-const PRINT_OUT = 59.1;
+const FOV = 24;
+const OPEN = THREE.MathUtils.degToRad(176); // a lid lies back a little short of flat
+// at rest it's turned a little: right side nearer, top leaning away, tipped anticlockwise
+const REST_YAW = -0.1;
+const REST_PITCH = -0.1;
+const REST_ROLL = 0.06;
+const SPIN = 0.12; // radians a second: the disc barely turns, about 7 degrees a second
 const SLIDE = 1.0; // seconds for one case to make way for the next
+const DRAG_YAW = 0.0085; // radians per pixel
+const DRAG_PITCH = 0.006;
 
-const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
-const clamp01 = (x) => clamp(x, 0, 1);
-const lerp = (a, b, t) => a + (b - a) * t;
-const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+const clamp = (v, a, b) => Math.min(Math.max(v, a), b);
+const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 const easeOut = (t) => 1 - Math.pow(1 - t, 3);
 const easeIn = (t) => t * t * t;
 const easeOutBack = (t) => 1 + 2.2 * Math.pow(t - 1, 3) + 1.2 * Math.pow(t - 1, 2);
 // how far through [a, b] the time t is, 0 to 1
-const span = (t, a, b) => clamp01((t - a) / (b - a));
+const span = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
 
-function curve(frames) {
-  const n = frames.length;
-  const ts = frames.map((f) => f[0]);
-  const vs = frames.map((f) => f[1]);
-  const d = [];
-  for (let i = 0; i < n - 1; i++) d.push((vs[i + 1] - vs[i]) / (ts[i + 1] - ts[i]));
-  const m = new Array(n).fill(0);
-  for (let i = 1; i < n - 1; i++) m[i] = d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2;
-  for (let i = 0; i < n - 1; i++) {
-    if (d[i] === 0) {
-      m[i] = 0;
-      m[i + 1] = 0;
-      continue;
-    }
-    const a = m[i] / d[i];
-    const b = m[i + 1] / d[i];
-    const s = a * a + b * b;
-    if (s > 9) {
-      const k = 3 / Math.sqrt(s);
-      m[i] = k * a * d[i];
-      m[i + 1] = k * b * d[i];
-    }
-  }
-  return (t) => {
-    if (t <= ts[0]) return vs[0];
-    if (t >= ts[n - 1]) return vs[n - 1];
-    let i = 0;
-    while (t > ts[i + 1]) i++;
-    const h = ts[i + 1] - ts[i];
-    const u = (t - ts[i]) / h;
-    const u2 = u * u;
-    const u3 = u2 * u;
-    return (
-      (2 * u3 - 3 * u2 + 1) * vs[i] +
-      (u3 - 2 * u2 + u) * h * m[i] +
-      (-2 * u3 + 3 * u2) * vs[i + 1] +
-      (u3 - u2) * h * m[i + 1]
-    );
-  };
+// A critically damped spring towards `target`, time constant `tau` seconds.
+function follow(state, target, tau, dt) {
+  const w = 1 / tau;
+  state.vel += (w * w * (target - state.value) - 2 * w * state.vel) * dt;
+  state.value += state.vel * dt;
 }
 
-const OPEN_ANGLE = 3.05;
-const OPEN_T = 2.3;
-const OPEN = {
-  yaw: curve([
-    [0, 0],
-    [0.55, 0.3],
-    [1.0, 0.85],
-    [1.2, 2.0],
-    [1.41, 3.4],
-    [1.63, 4.9],
-    [1.85, 6.05],
-    [2.05, 6.36],
-    [2.3, 2 * Math.PI],
-  ]),
-  lid: curve([
-    [0, 0],
-    [0.97, 0],
-    [1.2, 0.45],
-    [1.41, 1.35],
-    [1.63, 2.3],
-    [1.85, 2.92],
-    [2.05, 3.12],
-    [2.3, OPEN_ANGLE],
-  ]),
-  spread: curve([
-    [0, 0],
-    [1.12, 0],
-    [1.9, 0.9],
-    [2.3, 1],
-  ]),
-  pitch: curve([
-    [0, 0],
-    [1.35, 0],
-    [2.3, -0.1],
-  ]),
-};
+// The 3D scene: a jewel case, turned by dragging (it always comes back face on), opened by
+// tapping. Moving to another song, the next case drops in from above and waits at the top while
+// this one falls away backwards, then slides down into its place.
+export class Stage {
+  constructor(container, { reducedMotion = false } = {}) {
+    this.container = container;
+    this.reducedMotion = reducedMotion;
+    this.onTap = null; // the case was tapped
+    this.onInteract = null; // any pointer down on the stage
+    this.onFrame = null; // (dt) once a frame
 
-const CLOSE_T = 1.95;
-const CLOSE = {
-  lid: curve([
-    [0, OPEN_ANGLE],
-    [0.22, 1.75],
-    [0.48, 1.55],
-    [1.05, 1.08],
-    [1.42, 0.6],
-    [1.6, 0.26],
-    [1.7, 0],
-    [1.78, 0.07],
-    [1.88, 0],
-  ]),
-  spread: curve([
-    [0, 1],
-    [0.3, 0.92],
-    [1.2, 0.55],
-    [1.72, 0],
-  ]),
-  yaw: curve([
-    [0, 0],
-    [0.5, 0.2],
-    [1.3, 0.12],
-    [1.88, 0],
-  ]),
-  pitch: curve([
-    [0, -0.1],
-    [1.6, -0.05],
-    [1.7, 0.035],
-    [1.82, -0.01],
-    [1.95, 0],
-  ]),
-  roll: curve([
-    [0, 0],
-    [0.8, -0.05],
-    [1.95, 0],
-  ]),
-};
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    renderer.setPixelRatio(pixelRatio);
+    renderer.setClearColor(0xffffff, 1);
+    renderer.toneMapping = THREE.NeutralToneMapping;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.VSMShadowMap;
+    renderer.domElement.className = 'mx-canvas';
+    renderer.domElement.setAttribute('aria-hidden', 'true');
+    container.appendChild(renderer.domElement);
+    this.renderer = renderer;
 
-function sway(t, motion) {
-  return {
-    y: 1.8 * Math.sin(t * 1.1) * motion,
-    yaw: -0.2 + (0.1 * Math.sin(t * 0.9) + 0.03 * Math.sin(t * 2.1)) * motion,
-    pitch: -0.12 + 0.045 * Math.sin(t * 0.7) * motion,
-    roll: 0.03 + 0.018 * Math.sin(t * 0.5) * motion,
-    lid: 0,
-    spread: 0,
-  };
-}
-
-// Throws when WebGL won't start, so the page can show the artwork flat instead.
-export function createStage(container, { reducedMotion = false, calibrate = true } = {}) {
-  const motion = reducedMotion ? 0.35 : 1;
-  // what the page hears from the stage
-  const api = {
-    onTap: null, // the case was tapped
-    onInteract: null, // any pointer down on the stage
-    onFrame: null, // (dt) once a frame
-    onOpen: null, // (open) the case started opening or closing
-    onShown: null, // the case opened and closed again on its own
-    onFail: null, // (problems) this browser couldn't draw the scene after all: the stage has removed itself
-  };
-
-  const canvas = document.createElement('canvas');
-  canvas.className = 'mx-canvas';
-  canvas.setAttribute('role', 'img');
-  canvas.setAttribute(
-    'aria-label',
-    'A clear CD jewel case with its disc spinning inside. Tap the case to open it, or drag it to turn it.',
-  );
-  container.appendChild(canvas);
-
-  let renderer;
-  try {
-    renderer = new THREE.WebGLRenderer({
-      canvas,
-      antialias: false,
-      alpha: false,
-      powerPreference: 'high-performance',
-    });
-  } catch (err) {
-    canvas.remove();
-    throw err;
-  }
-  // How finely to draw: see layout(). ratioCap is lowered when the GPU can't keep up.
-  let ratioCap = 2;
-  renderer.autoClear = false;
-  renderer.setClearColor(0xffffff, 0);
-  const gl = renderer.getContext();
-  const hdr =
-    renderer.extensions.has('EXT_color_buffer_float') || renderer.extensions.has('EXT_color_buffer_half_float');
-
-  // Some browsers start WebGL and then can't draw this scene: an in-app browser with less memory,
-  // a graphics driver that won't compile a shader, render targets it can't draw into. Rather than
-  // leave the page empty, the stage checks its first frames, tries again lighter, and if it still
-  // can't, hands back to the page (api.onFail). What it found is kept for ?debug.
-  const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-  const report = {
-    gpu: String(gl.getParameter(debugInfo ? debugInfo.UNMASKED_RENDERER_WEBGL : gl.RENDERER)),
-    float: renderer.extensions.has('EXT_color_buffer_float') ? 'float' : hdr ? 'half float' : 'none',
-    maxSamples: gl.getParameter(gl.MAX_SAMPLES),
-    problems: [],
-    timing: [], // what fit() measured
-  };
-  const shaderErrors = [];
-  renderer.debug.onShaderError = (gl, program, vertex, fragment) => {
-    const first = (log) => (log || '').trim().split('\n')[0];
-    const why =
-      first(gl.getShaderInfoLog(fragment)) || first(gl.getShaderInfoLog(vertex)) || first(gl.getProgramInfoLog(program));
-    shaderErrors.push(`a shader failed: ${why || 'no reason given'}`);
-    console.error('CD case: a shader failed.', gl.getShaderInfoLog(fragment), gl.getShaderInfoLog(vertex), gl.getProgramInfoLog(program));
-  };
-  let tier = 0; // 0 as designed; 1 lighter
-  let failed = false;
-  const target = (samples, depth = samples > 0) =>
-    new THREE.WebGLRenderTarget(1, 1, {
-      type: hdr ? THREE.HalfFloatType : THREE.UnsignedByteType,
-      samples,
-      depthBuffer: depth,
-      stencilBuffer: false,
-      resolveDepthBuffer: false,
-    });
-  let rtPage = target(0);
-  const rt = [target(MSAA), target(MSAA)];
-  const rtBright = target(0);
-  const rtStarA = target(0);
-  const rtStarB = target(0);
-
-  const camera = new THREE.PerspectiveCamera(FOV, 1, 10, 4000);
-  const opaque = new THREE.Scene();
-  const glass = new THREE.Scene();
-  const hits = new THREE.Scene();
-
-  const screenCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-  const screenQuad = new THREE.PlaneGeometry(2, 2);
-  const pass = (frag, uniforms) => {
-    const material = new THREE.ShaderMaterial({
-      uniforms,
-      vertexShader: SCREEN_VERT,
-      fragmentShader: frag,
-      depthTest: false,
-      depthWrite: false,
-    });
     const scene = new THREE.Scene();
-    scene.add(new THREE.Mesh(screenQuad, material));
-    return { scene, material };
-  };
-  const copyMat = new THREE.ShaderMaterial({
-    uniforms: { uTex: { value: null } },
-    vertexShader: SCREEN_VERT,
-    fragmentShader: COPY_FRAG,
-    depthTest: false,
-    depthWrite: false,
-  });
-  const copyQuad = new THREE.Mesh(screenQuad, copyMat);
-  copyQuad.frustumCulled = false;
-  copyQuad.renderOrder = -10;
-  const picked = {
-    uTex: { value: rtPage.texture },
-    uTexInside: { value: rtPage.texture },
-    uRect: { value: new THREE.Vector4(0, 0, 0, 0) },
-  };
-  const bright = pass(BRIGHT_FRAG, {
-    ...picked,
-    uTexel: { value: new THREE.Vector2() },
-    uThreshold: { value: STAR_THRESHOLD },
-  });
-  const streak = pass(STREAK_FRAG, {
-    uTex: { value: null },
-    uStep: { value: new THREE.Vector2() },
-    uFalloff: { value: 0.7 },
-  });
-  const final = pass(FINAL_FRAG, {
-    ...picked,
-    uStarA: { value: rtStarA.texture },
-    uStarB: { value: rtStarB.texture },
-    uStars: { value: STARS },
-  });
+    scene.environment = studioEnvironment(renderer);
+    this.scene = scene;
+    this.camera = new THREE.PerspectiveCamera(FOV, 1, 10, 6000);
 
-  const roomRT = new THREE.WebGLCubeRenderTarget(ROOM_SIZE, {
-    type: hdr ? THREE.HalfFloatType : THREE.UnsignedByteType,
-    generateMipmaps: true,
-    minFilter: THREE.LinearMipmapLinearFilter,
-    magFilter: THREE.LinearFilter,
-    depthBuffer: false,
-  });
-  const bake = pass(ROOM_BAKE_FRAG, { uFace: { value: 0 }, uSize: { value: ROOM_SIZE } });
-  const bakeRoom = () => {
-    if (failed) return;
-    for (let face = 0; face < 6; face++) {
-      bake.material.uniforms.uFace.value = face;
-      renderer.setRenderTarget(roomRT, face);
-      renderer.render(bake.scene, screenCam);
-    }
-    renderer.setRenderTarget(null);
-  };
+    // a white wall a little behind the case, to catch its shadow
+    const wall = new THREE.Mesh(new THREE.PlaneGeometry(6000, 6000), new THREE.ShadowMaterial({ opacity: 0.07 }));
+    wall.position.z = -42;
+    wall.receiveShadow = true;
+    scene.add(wall);
+    const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+    sun.position.set(-0.32, 0.45, 1).multiplyScalar(700);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(1024, 1024);
+    Object.assign(sun.shadow.camera, { left: -300, right: 300, top: 300, bottom: -300, near: 200, far: 1500 });
+    sun.shadow.radius = 16;
+    sun.shadow.blurSamples = 20;
+    sun.shadow.bias = -0.0004;
+    scene.add(sun, sun.target);
 
-  const shadowOf = {
-    uLight: { value: LIGHT.clone() },
-    uTrayInv: { value: [new THREE.Matrix4(), new THREE.Matrix4()] },
-    uLidInv: { value: [new THREE.Matrix4(), new THREE.Matrix4()] },
-    uScale: { value: [1, 1] },
-    uOn: { value: [0, 0] },
-  };
-  const backdrop = new THREE.Mesh(
-    new THREE.PlaneGeometry(8000, 8000),
-    new THREE.ShaderMaterial({ uniforms: shadowOf, vertexShader: BACKDROP_VERT, fragmentShader: BACKDROP_FRAG }),
-  );
-  backdrop.position.z = BACKDROP_Z;
-  backdrop.renderOrder = -1; // the page has no depth buffer: the wall goes down first, the discs over it
-  opaque.add(backdrop);
-  const depthOnly = new THREE.MeshBasicMaterial({ colorWrite: false });
-  glass.add(copyQuad);
+    // turn: spun by dragging; frame: slid over as the lid opens, so the open case stays centred
+    this.turn = new THREE.Group();
+    this.frame = new THREE.Group();
+    this.turn.add(this.frame);
+    scene.add(this.turn);
+    this.cases = [new JewelCase(pixelRatio), new JewelCase(pixelRatio)];
+    for (const c of this.cases) this.frame.add(c.group);
+    this.cases[1].group.visible = false;
+    this.current = this.cases[0];
 
-  const coarse = window.matchMedia('(pointer: coarse)').matches;
-  // rays traced per pixel through the plastic; shared by every rod material, set in layout()
-  const rodSamples = { value: coarse ? 1 : 2 };
-  // the brightest the rods and disc write: no limit, or white at low density (see sharpen())
-  const ceiling = { value: 1e4 };
-
-  const rodMaterial = () =>
-    new THREE.ShaderMaterial({
-      uniforms: {
-        uBehind: { value: null },
-        uRoom: { value: roomRT.texture },
-        uRoomSize: { value: ROOM_SIZE },
-        uProj: { value: camera.projectionMatrix },
-        uDepth: { value: DEPTH },
-        uIor: { value: IOR },
-        uSamples: rodSamples,
-        uCeiling: ceiling,
-        uAbsorb: { value: new THREE.Vector3(...ABSORB) },
-      },
-      vertexShader: ROD_VERT,
-      fragmentShader: ROD_FRAG,
-    });
-  const sheetMaterial = () =>
-    new THREE.ShaderMaterial({
-      uniforms: {
-        uIor: { value: IOR },
-        uAbsorb: { value: new THREE.Vector3(...ABSORB) },
-      },
-      vertexShader: SHEET_VERT,
-      fragmentShader: SHEET_FRAG,
-      transparent: true,
-      depthWrite: false,
-      polygonOffset: true,
-      polygonOffsetFactor: 1,
-      polygonOffsetUnits: 4,
-      blending: THREE.CustomBlending,
-      blendSrc: THREE.OneFactor,
-      blendDst: THREE.OneMinusSrcAlphaFactor,
-      blendSrcAlpha: THREE.ZeroFactor,
-      blendDstAlpha: THREE.OneFactor,
-    });
-
-  const fixed = (mesh, scene) => {
-    mesh.matrixAutoUpdate = false;
-    mesh.visible = false;
-    scene.add(mesh);
-    return mesh;
-  };
-
-  const hitPlane = new THREE.PlaneGeometry(CASE, CASE);
-  const hitMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
-
-  // a disc with nothing printed on it: bare silver
-  const bare = new THREE.DataTexture(new Uint8Array(4), 1, 1);
-  bare.needsUpdate = true;
-
-  const tray = trayGeometry();
-  const lid = lidGeometry();
-  const discGeo = discGeometry();
-
-  function buildCase(slot) {
-    const trayRodMat = rodMaterial();
-    const lidRodMat = rodMaterial();
-    const discMat = new THREE.ShaderMaterial({
-      uniforms: {
-        uArt: { value: bare },
-        uCeiling: ceiling,
-        uArtIn: { value: ART_IN },
-        uPrintOut: { value: PRINT_OUT },
-      },
-      vertexShader: DISC_VERT,
-      fragmentShader: DISC_FRAG,
-    });
-
-    const item = {
-      slot,
-      trayRods: fixed(new THREE.Mesh(tray.rods, trayRodMat), glass),
-      traySheets: fixed(new THREE.Mesh(tray.sheets, sheetMaterial()), glass),
-      lidRods: fixed(new THREE.Mesh(lid.rods, lidRodMat), glass),
-      lidSheets: fixed(new THREE.Mesh(lid.sheets, sheetMaterial()), glass),
-      discMesh: fixed(new THREE.Mesh(discGeo, discMat), opaque),
-      discDepth: fixed(new THREE.Mesh(discGeo, depthOnly), glass),
-      hitTray: fixed(new THREE.Mesh(hitPlane, hitMat), hits),
-      hitLid: fixed(new THREE.Mesh(hitPlane, hitMat), hits),
-      trayRodMat,
-      lidRodMat,
-      discMat,
-      art: null,
-      shown: false,
-      moved: new THREE.Matrix4(), // where a change of song has taken it
-      mCase: new THREE.Matrix4(),
-      mLid: new THREE.Matrix4(),
-      depthTray: 0,
-      depthLid: 0,
+    this.state = {
+      open: false,
+      still: false,
+      spinSpeed: 0,
+      disc: 0,
+      yaw: REST_YAW,
+      pitch: REST_PITCH,
+      yawVel: 0,
+      pitchVel: 0,
+      dragging: false,
+      idle: 0,
+      slide: null,
     };
-    item.parts = [
-      item.trayRods,
-      item.traySheets,
-      item.lidRods,
-      item.lidSheets,
-      item.discMesh,
-      item.discDepth,
-      item.hitTray,
-      item.hitLid,
-    ];
-    item.traySheets.renderOrder = 1;
-    item.lidSheets.renderOrder = 1;
-    item.discDepth.renderOrder = -5;
-    return item;
+    this.time = 0;
+    this.size = { width: 1, height: 1 };
+
+    this.#pointer();
+    this.resizer = new ResizeObserver(() => this.#resize());
+    this.resizer.observe(container);
+    this.#resize();
   }
 
-  // Print a song's artwork on a case's disc: a square canvas whose half-width is the disc's 60mm
-  // radius. Null leaves the disc bare.
-  function dress(it, print) {
-    it.art?.dispose();
-    it.art = null;
-    if (print) {
-      it.art = new THREE.CanvasTexture(print);
-      it.art.colorSpace = THREE.SRGBColorSpace;
-      it.art.anisotropy = renderer.capabilities.getMaxAnisotropy();
-    }
-    it.discMat.uniforms.uArt.value = it.art || bare;
-  }
-
-  const hide = (it) => {
-    it.shown = false;
-    for (const o of it.parts) o.visible = false;
-    shadowOf.uOn.value[it.slot] = 0;
-  };
-
-  const items = [buildCase(0), buildCase(1)];
-  let item = items[0];
-  item.shown = true;
-
-  const pointer = { x: 0, y: 0, over: false, movedAt: 0 };
-  const lean = { x: 0, y: 0 };
-  const grab = {
-    active: false,
-    start: null,
-    last: null,
-    x: 0,
-    y: 0,
-    vx: 0,
-    vy: 0,
-    flick: { x: 0, y: 0 },
-    moved: 0,
-    dist: 0,
-    touch: false,
-  };
-  const st = {
-    t: 0,
-    swayT: 0, // the sway's own clock, which stops when movement is stopped
-    swayRate: 1,
-    clock: 0,
-    rest: REST,
-    phase: 'rest',
-    phaseAt: 0,
-    auto: false,
-    closeAfter: false,
-    spin: 0,
-    spinRate: SPIN,
-    open: false,
-    still: false,
-    playing: false,
-    bob: 0, // how far the open case's bob has come in
-  };
-  let slide = null; // { t, dir, from, pose }: the last song's case making way
-  let pose = null; // the current case's pose last frame
-  const raycaster = new THREE.Raycaster();
-  const ndc = new THREE.Vector2();
-  let raf = 0;
-  let last = 0;
-  let view = { w: 1, h: 1, openScale: 1 };
-
-  const setOpenFlag = (on) => {
-    if (st.open === on) return;
-    st.open = on;
-    api.onOpen?.(on);
-  };
-
-  function startOpen(auto) {
-    if (st.phase !== 'rest') return;
-    st.phase = 'opening';
-    st.phaseAt = st.t;
-    st.auto = auto;
-    st.bob = 0;
-    setOpenFlag(true);
-  }
-  function startClose() {
-    if (st.phase === 'opening') {
-      st.auto = true;
-      st.closeAfter = true;
-      return;
-    }
-    if (st.phase !== 'open') return;
-    st.phase = 'closing';
-    st.phaseAt = st.t;
-    setOpenFlag(false);
-  }
-  function toggleOpen(on = !(st.phase === 'opening' || st.phase === 'open')) {
-    if (on) startOpen(false);
-    else startClose();
-  }
-
-  // the open case's bob, at strength k
-  const bob = (w, k) => ({
-    yaw: 0.06 * Math.sin(w * 0.6) * motion * k,
-    pitch: 0.02 * Math.sin(w * 0.8) * motion * k,
-    lid: 0.025 * Math.sin(w * 1.3) * motion * k,
-  });
-
-  function showPose(t) {
-    const w = st.swayT;
-    const p = sway(w, motion);
-    const since = t - st.phaseAt;
-    if (st.phase === 'opening') {
-      const q = Math.min(since, OPEN_T);
-      p.yaw = lerp(p.yaw, 0, clamp01(q / 1.0)) + OPEN.yaw(q);
-      p.lid = OPEN.lid(q);
-      p.spread = OPEN.spread(q);
-      p.pitch = lerp(p.pitch, OPEN.pitch(q), clamp01(q / 1.45));
-      p.roll *= 1 - clamp01(q / 1.45);
-    } else if (st.phase === 'open') {
-      // Open, the case bobs a little. Switched on at full strength the moment it's open, that bob
-      // made it jump a few degrees in one frame; it comes in over a second instead.
-      st.bob = easeInOut(clamp01(since / 1.2));
-      const b = bob(w, st.bob);
-      p.yaw = b.yaw;
-      p.pitch = -0.1 + b.pitch;
-      p.roll = 0;
-      p.lid = OPEN_ANGLE + b.lid;
-      p.spread = 1;
-    } else if (st.phase === 'closing') {
-      const q = Math.min(since, CLOSE_T);
-      const back = clamp01((q - 0.9) / (CLOSE_T - 0.9));
-      const rest = easeInOut(back);
-      // and goes out as it starts to shut, rather than stopping dead
-      const b = bob(w, st.bob * (1 - easeInOut(clamp01(q / 0.6))));
-      p.yaw = lerp(CLOSE.yaw(q), p.yaw, rest) + b.yaw;
-      p.pitch = lerp(CLOSE.pitch(q), p.pitch, rest) + b.pitch;
-      p.roll = lerp(CLOSE.roll(q), p.roll, rest);
-      p.lid = CLOSE.lid(q) + b.lid;
-      p.spread = CLOSE.spread(q);
-    }
-    p.pitch += lean.x + grab.x;
-    p.yaw += lean.y + grab.y;
-    return p;
-  }
-
-  const _q = new THREE.Quaternion();
-  const _e = new THREE.Euler(0, 0, 0, 'XYZ');
-  const _v = new THREE.Vector3();
-  const _s = new THREE.Vector3();
-  const _m = new THREE.Matrix4();
-  const _h = new THREE.Matrix4();
-  const _hi = new THREE.Matrix4();
-  function place(it, p) {
-    const s = lerp(1, view.openScale, p.spread);
-    _e.set(p.pitch, p.yaw, p.roll);
-    _q.setFromEuler(_e);
-    _v.set(HALF * s * p.spread * 0.92, p.y, 0);
-    it.mCase.compose(_v, _q, _s.setScalar(s)).premultiply(it.moved);
-    _h.makeTranslation(HINGE.x, 0, HINGE.z);
-    _hi.makeTranslation(-HINGE.x, 0, -HINGE.z);
-    _m.makeRotationY(-p.lid);
-    it.mLid.copy(it.mCase).multiply(_h).multiply(_m).multiply(_hi);
-
-    it.trayRods.matrix.copy(it.mCase);
-    it.traySheets.matrix.copy(it.mCase);
-    it.lidRods.matrix.copy(it.mLid);
-    it.lidSheets.matrix.copy(it.mLid);
-    it.discMesh.matrix.copy(it.mCase).multiply(_m.makeRotationZ(-st.spin));
-    it.discDepth.matrix.copy(it.discMesh.matrix);
-    it.hitTray.matrix.copy(it.mCase);
-    it.hitLid.matrix.copy(it.mLid).multiply(_m.makeTranslation(0, 0, 4));
-    for (const o of it.parts) {
-      o.matrixWorld.copy(o.matrix);
-      o.visible = true;
-    }
-    _v.set(0, 0, -2).applyMatrix4(it.mCase).applyMatrix4(camera.matrixWorldInverse);
-    it.depthTray = _v.z;
-    _v.set(0, 0, 4).applyMatrix4(it.mLid).applyMatrix4(camera.matrixWorldInverse);
-    it.depthLid = _v.z;
-
-    shadowOf.uTrayInv.value[it.slot].copy(it.mCase).invert();
-    shadowOf.uLidInv.value[it.slot].copy(it.mLid).invert();
-    shadowOf.uScale.value[it.slot] = s;
-    shadowOf.uOn.value[it.slot] = 1;
-  }
-
-  // Changing song, t seconds in: the new case drops in from above, waits with its lower part
-  // showing, then settles into place, coming level as it lands; the old one falls away backwards,
-  // top first, and out of sight. `dir` -1 runs it the other way.
-  const _r = new THREE.Euler();
-  function slideTo(t) {
-    const { dir, from } = slide;
-    const arrive = easeOutBack(span(t, 0.58, 0.95));
-    _v.set(
-      0,
-      dir * CASE * (1.5 - 0.6 * easeOut(span(t, 0, 0.2)) - 0.06 * span(t, 0.2, 0.6) - 0.84 * arrive),
-      24 * (1 - span(t, 0.8, 1)),
-    );
-    _r.set(dir * 0.28 * (1 - easeOut(span(t, 0.55, 0.98))), 0, dir * 0.05 * (1 - arrive));
-    item.moved.compose(_v, _q.setFromEuler(_r), _s.setScalar(1));
-    const fall = easeInOut(span(t, 0.05, 0.65));
-    _v.set(0, -dir * CASE * (0.85 * fall + 0.8 * easeIn(span(t, 0.65, 1))), -170 * easeInOut(span(t, 0.05, 1)));
-    _r.set(-dir * 0.55 * easeInOut(span(t, 0.05, 0.85)), 0.15 * fall, -dir * 0.06 * fall);
-    from.moved.compose(_v, _q.setFromEuler(_r), _s.setScalar(1));
-  }
-
-  function endSlide() {
-    hide(slide.from);
-    slide.from.moved.identity();
-    item.moved.identity();
-    slide = null;
-  }
-
-  // Put a song's print in the case. `direction` 1 brings the next case down from above, -1 the
-  // last one up from below, 0 just changes the disc.
-  function show(print, direction = 0) {
-    if (slide) endSlide();
-    if (!direction || reducedMotion || !pose) {
-      dress(item, print);
-      return;
-    }
-    const from = item;
-    item = items.find((it) => it !== from);
-    dress(item, print);
-    item.shown = true;
-    slide = { t: 0, dir: direction, from, pose };
-    slideTo(0);
-    // the new case comes in shut, and starts its show over
-    st.phase = 'rest';
-    st.phaseAt = st.t;
-    st.clock = 0;
-    st.rest = REST;
-    st.auto = false;
-    st.closeAfter = false;
-    setOpenFlag(false);
-  }
-
-  const caseAt = (x, y) => {
-    ndc.set(x, y);
-    raycaster.setFromCamera(ndc, camera);
-    return raycaster.intersectObjects([item.hitTray, item.hitLid], false).length > 0;
-  };
-  // someone about to tap the case: the show waits. A mouse just left sitting there doesn't count.
-  const hovering = () =>
-    pointer.over && !grab.active && st.t - pointer.movedAt < HOVER_HOLD && caseAt(pointer.x, pointer.y);
-
-  function frame(dt) {
-    st.t += dt;
-    const { t } = st;
-    api.onFrame?.(dt);
-
-    const want = getSpin() ? SPIN : 0;
-    st.spinRate += (want - st.spinRate) * (1 - Math.exp(-dt * SPIN_EASE * 3));
-    st.spin += st.spinRate * dt;
-    st.swayRate += ((st.still ? 0 : 1) - st.swayRate) * (1 - Math.exp(-dt * SPIN_EASE * 3));
-    st.swayT += st.swayRate * dt;
-
-    const hover = pointer.over && !grab.active;
-    const ax = hover ? pointer.y * 0.22 : 0;
-    const ay = hover ? -pointer.x * 0.35 : 0;
-    const k = 1 - Math.exp(-dt * 4);
-    lean.x += (ax - lean.x) * k;
-    lean.y += (ay - lean.y) * k;
-    if (!grab.active) {
-      grab.vx += (-GRAB_K * grab.x - GRAB_C * grab.vx) * dt;
-      grab.vy += (-GRAB_K * grab.y - GRAB_C * grab.vy) * dt;
-      grab.x += grab.vx * dt;
-      grab.y += grab.vy * dt;
-    }
-
-    const since = t - st.phaseAt;
-    if (st.phase === 'opening' && since >= OPEN_T) {
-      st.phase = 'open';
-      st.phaseAt = t;
-    } else if (st.phase === 'closing' && since >= CLOSE_T) {
-      st.phase = 'rest';
-      st.phaseAt = t;
-      st.clock = 0;
-      st.rest = AGAIN;
-      if (st.auto) api.onShown?.();
-    }
-
-    const held = grab.active || hovering() || (st.phase === 'open' && !st.auto);
-    const showing = !getPaused() && !held;
-    if (st.phase === 'open' && (st.closeAfter || (st.auto && showing && t - st.phaseAt >= OPEN_HOLD))) {
-      st.closeAfter = false;
-      startClose();
-    }
-    if (showing) {
-      st.clock += dt;
-      if (st.phase === 'rest' && st.clock >= st.rest) startOpen(true);
-    }
-
-    pose = showPose(t);
-    if (slide) {
-      slide.t += dt;
-      slideTo(Math.min(slide.t, SLIDE));
-      // the last case shuts as it goes
-      const shut = 1 - easeInOut(span(slide.t, 0, 0.6));
-      place(slide.from, { ...slide.pose, lid: slide.pose.lid * shut, spread: slide.pose.spread * shut });
-    }
-    place(item, pose);
-    if (slide && slide.t >= SLIDE) endSlide();
-    draw();
-  }
-
-  // movement stopped: the disc winds down, the case stops drifting and the show stops. While a
-  // song plays, the show waits too: the lid stays as it is.
-  const getSpin = () => !st.still;
-  const getPaused = () => st.still || st.playing;
-
-  const _c = new THREE.Vector3();
-  function caseRect(w, h) {
-    let x0 = Infinity;
-    let y0 = Infinity;
-    let x1 = -Infinity;
-    let y1 = -Infinity;
-    for (const it of items) {
-      if (!it.shown) continue;
-      for (const m of [it.mCase, it.mLid]) {
-        for (let i = 0; i < 8; i++) {
-          _c.set(i & 1 ? HALF + 3 : -HALF - 3, i & 2 ? HALF + 3 : -HALF - 3, i & 4 ? 7 : -7);
-          _c.applyMatrix4(m).project(camera);
-          x0 = Math.min(x0, _c.x);
-          x1 = Math.max(x1, _c.x);
-          y0 = Math.min(y0, _c.y);
-          y1 = Math.max(y1, _c.y);
-        }
-      }
-    }
-    const pad = 0.04 * Math.max(x1 - x0, y1 - y0) + 0.02;
-    const px = (v) => Math.round(((v + 1) / 2) * w);
-    const py = (v) => Math.round(((v + 1) / 2) * h);
-    const r = {
-      x: clamp(px(x0 - pad), 0, w),
-      y: clamp(py(y0 - pad), 0, h),
-      x1: clamp(px(x1 + pad), 0, w),
-      y1: clamp(py(y1 + pad), 0, h),
-    };
-    return r.x1 > r.x && r.y1 > r.y ? r : null;
-  }
-
-  const groups = [];
-  function draw() {
-    renderer.setRenderTarget(rtPage);
-    renderer.clear();
-    renderer.render(opaque, camera);
-
-    groups.length = 0;
-    for (const it of items) {
-      if (!it.shown) continue;
-      groups.push({ depth: it.depthTray, rods: it.trayRods, sheets: it.traySheets, mat: it.trayRodMat });
-      groups.push({ depth: it.depthLid, rods: it.lidRods, sheets: it.lidSheets, mat: it.lidRodMat });
-    }
-    groups.sort((a, b) => a.depth - b.depth);
-    const glassMeshes = groups.flatMap((g) => [g.rods, g.sheets]);
-    const w = rtPage.width;
-    const h = rtPage.height;
-    const rect = caseRect(w, h);
-    let from = rtPage;
-    if (rect) {
-      for (const r of rt) {
-        r.scissor.set(rect.x, rect.y, rect.x1 - rect.x, rect.y1 - rect.y);
-        r.scissorTest = true;
-      }
-      groups.forEach((g, i) => {
-        const into = rt[i % 2];
-        renderer.setRenderTarget(into);
-        renderer.clear();
-        copyMat.uniforms.uTex.value = from.texture;
-        for (const m of glassMeshes) m.visible = m === g.rods || m === g.sheets;
-        g.mat.uniforms.uBehind.value = from.texture;
-        renderer.render(glass, camera);
-        from = into;
-      });
-      for (const r of rt) r.scissorTest = false;
-    }
-    for (const m of glassMeshes) m.visible = true;
-    picked.uTexInside.value = from.texture;
-    if (rect) picked.uRect.value.set(rect.x / w, rect.y / h, rect.x1 / w, rect.y1 / h);
-    else picked.uRect.value.set(0, 0, 0, 0);
-
-    bright.material.uniforms.uTexel.value.set(1 / rtBright.width, 1 / rtBright.height);
-    renderer.setRenderTarget(rtBright);
-    renderer.render(bright.scene, screenCam);
-    streak.material.uniforms.uTex.value = rtBright.texture;
-    streak.material.uniforms.uStep.value.set(1.5 / rtBright.width, 0);
-    renderer.setRenderTarget(rtStarA);
-    renderer.render(streak.scene, screenCam);
-    streak.material.uniforms.uStep.value.set(0, 1.5 / rtBright.height);
-    renderer.setRenderTarget(rtStarB);
-    renderer.render(streak.scene, screenCam);
-
-    renderer.setRenderTarget(null);
-    renderer.render(final.scene, screenCam);
-  }
-
-  // On a dense screen (Macs, phones) its own pixels are fine enough. On a 1x or 1.25x one (most
-  // Windows PCs) the disc's rim and the plastic's refractions would come out jagged, and drawing
-  // at 2x there costs too much on a big monitor. So instead, at low density: the page (wall and
-  // disc) gets 4x multisampling like the glass has, and each pixel of plastic traces 4 rays, not 2.
-  let pageAA = false;
-  let lowDensity = false;
-  let smooth = true; // turned off if even that is too slow
-  // Multisampling averages light before it's clipped to white, so an edge pixel with one of its
-  // samples on a lamp (up to 24x white) still averages to over white: a hard white speck. Capping
-  // at white first lets those edges smooth like the rest. Only at low density, where the specks are
-  // big enough to see; on a dense screen the scene stays exactly as designed.
-  function sharpen(low) {
-    // drawn at 1.5x, the extra pixels smooth the disc and the rays; turned down to 1x, they can't
-    const coarseRender = low && renderer.getPixelRatio() < LOW_DENSITY_RATIO;
-    // drawn at 1.5x, one ray a pixel is enough (2.25 render pixels each); at 1x, four
-    // (and with the smoothing given up, one: the lightest it goes)
-    rodSamples.value = coarse ? 1 : coarseRender ? 4 : lowDensity ? 1 : 2;
-    ceiling.value = lowDensity ? 1 : 1e4; // costs nothing, so it stays
-    if (coarseRender === pageAA) return;
-    pageAA = coarseRender;
-    rtPage.dispose();
-    // no depth: the wall goes down first and the discs over it, even one falling away behind it
-    rtPage = pageAA ? target(MSAA, false) : target(0);
-    picked.uTex.value = rtPage.texture;
-  }
-
-  function layout() {
-    const w = container.clientWidth || 1;
-    const h = container.clientHeight || 1;
-    // a low-density screen is drawn at 1.5x and shrunk to fit: the light refracted through each rod
-    // changes faster than one pixel can show, and only more pixels smooth that
-    const dpr = window.devicePixelRatio || 1;
-    const low = dpr < 1.5;
-    lowDensity = low;
-    const want = low ? LOW_DENSITY_RATIO : Math.min(dpr, 2);
-    const natural = Math.max(1, Math.min(want, Math.sqrt(PIXEL_BUDGET / (w * h))));
-    renderer.setPixelRatio(Math.min(natural, ratioCap));
-    sharpen(smooth && low);
-    renderer.setSize(w, h, false);
-    const size = renderer.getDrawingBufferSize(new THREE.Vector2());
-    rtPage.setSize(size.x, size.y);
-    for (const r of rt) r.setSize(size.x, size.y);
-    const hw = Math.max(1, Math.round(size.x / 2));
-    const hh = Math.max(1, Math.round(size.y / 2));
-    rtBright.setSize(hw, hh);
-    rtStarA.setSize(hw, hh);
-    rtStarB.setSize(hw, hh);
-    camera.aspect = w / h;
-    const tanHalf = Math.tan(THREE.MathUtils.degToRad(FOV / 2));
-    const fitH = CASE / FIT / 2 / tanHalf;
-    const fitW = (CASE * 1.3) / 2 / (tanHalf * camera.aspect);
-    const dist = Math.max(fitH, fitW);
-    camera.position.set(0, 0, dist);
-    camera.lookAt(0, 0, 0);
-    camera.setViewOffset(w, h, 0, DOCK_CLEAR / 2, w, h);
-    camera.updateProjectionMatrix();
-    camera.updateMatrixWorld();
-    const across = 2 * dist * tanHalf * camera.aspect;
-    view = { w, h, openScale: Math.min(1.04, across / (CASE * 2.25)) };
-  }
-
-  const ro = new ResizeObserver(() => layout());
-  ro.observe(container);
-
-  // Is it really drawing? Lost context, shaders that didn't compile, render targets the GPU can't
-  // draw into or ran out of memory for, and the plain wall in the corner not coming out white.
-  function verify() {
-    if (gl.isContextLost()) return ['the graphics context was lost'];
-    const problems = [...shaderErrors];
-    for (const [name, t] of [['page', rtPage], ['glass', rt[0]], ['glass', rt[1]], ['stars', rtBright]]) {
-      renderer.setRenderTarget(t);
-      const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
-      if (status !== gl.FRAMEBUFFER_COMPLETE) problems.push(`can't draw into the ${name} target (0x${status.toString(16)})`);
-    }
-    renderer.setRenderTarget(null);
-    for (let e = gl.getError(), n = 0; e !== gl.NO_ERROR && n < 16; e = gl.getError(), n++) {
-      if (e === gl.OUT_OF_MEMORY) problems.push('ran out of graphics memory');
-      if (e === gl.INVALID_FRAMEBUFFER_OPERATION) problems.push('drew into a target that was not ready');
-    }
-    const px = new Uint8Array(4);
-    gl.readPixels(1, 1, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
-    if (Math.min(px[0], px[1], px[2]) < 200) problems.push(`the wall came out ${px[0]},${px[1]},${px[2]}, not white`);
-    return [...new Set(problems)];
-  }
-
-  // A lighter scene for a browser that couldn't hold the full one: one pixel per CSS pixel, and
-  // two samples for the plastic's edges instead of four. Less than a quarter of the memory.
-  function lighten() {
-    tier = 1;
-    probing = false;
-    ratioCap = 1;
-    smooth = false;
-    for (let i = 0; i < rt.length; i++) {
-      rt[i].dispose();
-      rt[i] = target(2);
-    }
-    layout();
-  }
-
-  let checkAt = 1; // the frame to check next
-  let frames = 0;
-  function trouble(problems) {
-    report.problems.push(...problems.map((p) => (tier ? `${p} (lighter)` : p)));
-    console.warn(`CD case: ${problems.join('; ')}.`);
-    if (tier === 0 && !shaderErrors.length && !gl.isContextLost()) {
-      lighten();
-      checkAt = frames + 2;
-    } else {
-      fail();
-    }
-  }
-
-  let lostTimer = 0;
-  const onLost = () => {
-    report.problems.push(`the graphics context was lost${tier ? ' (lighter)' : ''}`);
-    lostTimer = setTimeout(fail, 3000); // and didn't come back
-  };
-  const onRestored = () => {
-    clearTimeout(lostTimer);
-    if (failed) return;
-    // lost once: come back lighter; lost again, lighter, and it's not going to work here
-    if (tier) return fail();
-    bakeRoom();
-    lighten();
-    checkAt = frames + 2;
-  };
-  canvas.addEventListener('webglcontextlost', onLost);
-  canvas.addEventListener('webglcontextrestored', onRestored);
-
-  function fail() {
-    if (failed) return;
-    failed = true;
-    cancelAnimationFrame(raf);
-    clearTimeout(lostTimer);
-    ro.disconnect();
-    container.removeEventListener('pointermove', onMove);
-    container.removeEventListener('pointerleave', onLeave);
-    container.removeEventListener('pointerdown', onDown);
-    container.removeEventListener('pointerup', onUp);
-    container.removeEventListener('pointercancel', onUp);
-    container.style.cursor = '';
-    canvas.remove();
-    try {
-      renderer.dispose();
-    } catch {}
-    api.onFail?.(report.problems.slice());
-  }
-
-  const toNdc = (e) => {
-    const r = container.getBoundingClientRect();
-    return [((e.clientX - r.left) / r.width) * 2 - 1, 1 - ((e.clientY - r.top) / r.height) * 2];
-  };
-  const onMove = (e) => {
-    [pointer.x, pointer.y] = toNdc(e);
-    pointer.over = true;
-    pointer.movedAt = st.t;
-    if (grab.active) {
-      const dx = e.clientX - grab.last.x;
-      const dy = e.clientY - grab.last.y;
-      grab.last = { x: e.clientX, y: e.clientY };
-      grab.dist = Math.max(grab.dist, Math.hypot(e.clientX - grab.start.x, e.clientY - grab.start.y));
-      grab.y = clamp(grab.y + dx * GRAB_RATE, -GRAB_YAW, GRAB_YAW);
-      grab.x = clamp(grab.x + dy * GRAB_RATE, -GRAB_TILT, GRAB_TILT);
-      grab.flick = { x: dy * GRAB_RATE * 60, y: dx * GRAB_RATE * 60 };
-      grab.moved = performance.now();
-    } else {
-      container.style.cursor = caseAt(pointer.x, pointer.y) ? 'pointer' : '';
-    }
-  };
-  const onLeave = () => {
-    pointer.over = false;
-  };
-  const onDown = (e) => {
-    if (e.button !== 0) return;
-    api.onInteract?.();
-    const [x, y] = toNdc(e);
-    if (!caseAt(x, y)) return;
-    grab.active = true;
-    grab.start = { x: e.clientX, y: e.clientY };
-    grab.last = { x: e.clientX, y: e.clientY };
-    grab.dist = 0;
-    grab.touch = e.pointerType !== 'mouse';
-    grab.flick = { x: 0, y: 0 };
-    container.setPointerCapture(e.pointerId);
-    container.style.cursor = 'grabbing';
-  };
-  const onUp = (e) => {
-    if (!grab.active) return;
-    grab.active = false;
-    const still = performance.now() - grab.moved > 90;
-    grab.vx = still ? 0 : grab.flick.x;
-    grab.vy = still ? 0 : grab.flick.y;
-    if (container.hasPointerCapture(e.pointerId)) container.releasePointerCapture(e.pointerId);
-    container.style.cursor = '';
-    if (grab.touch) pointer.over = false; // a lifted finger isn't hovering, whether or not pointerleave says so
-    if (e.type === 'pointerup' && grab.dist < (grab.touch ? TOUCH_SLOP : TAP_SLOP)) (api.onTap ? api.onTap() : toggleOpen());
-  };
-  container.addEventListener('pointermove', onMove);
-  container.addEventListener('pointerleave', onLeave);
-  container.addEventListener('pointerdown', onDown);
-  container.addEventListener('pointerup', onUp);
-  container.addEventListener('pointercancel', onUp);
-
-  const gaps = [];
-  let probing = true;
-  const probe = (gap) => {
-    // a gap of over half a second is a pause (a hidden tab, a stall), not the frame rate
-    if (!probing || document.hidden || gap > 0.5 || frames < 30) return; // not while it settles in
-    gaps.push(gap);
-    if (gaps.length < 45) return;
-    gaps.sort((a, b) => a - b);
-    const typical = gaps[gaps.length >> 1];
-    gaps.length = 0;
-    const ratio = renderer.getPixelRatio();
-    if (typical < 1 / 40) {
-      probing = false;
-      return;
-    }
-    if (ratio <= 1) {
-      // as coarse as it goes: drop the extra smoothing, and that's all there is
-      probing = false;
-      if (smooth && (pageAA || rodSamples.value > 2)) {
-        smooth = false;
-        layout();
-      }
-      return;
-    }
-    // frames are coming slower than 45 a second: scale the pixels by how far off that is
-    ratioCap = Math.min(slower(ratio, (typical * 1000 * FRAME_BUDGET_MS) / (1000 / 45)), ratio - 0.25);
-    layout();
-  };
-
-  layout();
-
-  // Every shader, compiled before the first frame: each scene against the target it draws into,
-  // since the target decides the variant. Where the browser can (KHR_parallel_shader_compile)
-  // this happens off the page's thread; Chrome on Windows translates each shader to Direct3D,
-  // which for the plastic's took long enough to stall the first frames.
-  function warm() {
-    const jobs = [];
-    const compile = (into, scene, cam) => {
-      renderer.setRenderTarget(into);
-      jobs.push(renderer.compileAsync(scene, cam));
-    };
-    compile(rtPage, opaque, camera);
-    compile(rtPage, bake.scene, screenCam);
-    compile(rt[0], glass, camera);
-    compile(rtBright, bright.scene, screenCam);
-    compile(rtStarA, streak.scene, screenCam);
-    compile(null, final.scene, screenCam);
-    renderer.setRenderTarget(null);
-    return Promise.all(jobs);
-  }
-
-  // How long does this GPU take over a frame? Timed while the canvas is still hidden, each frame
-  // waited out to the end (reading back one pixel), so the first frames anyone sees are already
-  // at a resolution that keeps up, rather than slow for the seconds the frame-rate probe needs.
-  // A coarser resolution for a frame that took `ms`: cost goes with the pixel count. A low-density
-  // screen goes straight from 1.5x to 1x, where it gets its own smoothing; in between it would get
-  // neither the pixels nor the smoothing.
-  function slower(ratio, ms) {
-    if (lowDensity) return 1;
-    return Math.max(1, Math.floor(ratio * Math.sqrt(FRAME_BUDGET_MS / ms) * 4) / 4);
-  }
-
-  function fit() {
-    const px = new Uint8Array(4);
-    const time = () => {
-      const ms = [];
-      for (let i = 0; i < 5; i++) {
-        const t0 = performance.now();
-        frame(1 / 60);
-        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
-        ms.push(performance.now() - t0);
-      }
-      return ms.slice(1).sort((a, b) => a - b)[1]; // the first frame still uploads things
-    };
-    for (let round = 0; round < 3; round++) {
-      const ms = time();
-      report.timing.push(`${renderer.getPixelRatio()}x${pageAA ? '+aa' : ''}: ${ms.toFixed(1)}ms`);
-      if (ms <= FRAME_BUDGET_MS) return;
-      const ratio = renderer.getPixelRatio();
-      if (ratio > 1) {
-        ratioCap = slower(ratio, ms);
-      } else if (smooth) {
-        smooth = false; // 1x and still slow: no extra smoothing either
-      } else {
-        return; // as light as it goes
-      }
-      layout();
-    }
-  }
-
-  api.start = async (onReady) => {
-    try {
-      await warm();
-    } catch (err) {
-      console.warn('CD case: shaders could not be compiled ahead.', err);
-    }
-    if (failed) return;
-    bakeRoom();
-    if (calibrate) fit();
+  start(onReady) {
+    let last = performance.now();
     let first = true;
-    const tick = (now) => {
-      if (failed) return;
-      raf = requestAnimationFrame(tick);
-      if (last && now - last < MIN_FRAME_MS) return; // a 120Hz+ monitor: every other refresh is enough
-      const gap = last ? (now - last) / 1000 : 1 / 60;
+    this.renderer.setAnimationLoop((now) => {
+      const dt = Math.min((now - last) / 1000, 1 / 20);
       last = now;
-      if (gl.isContextLost()) return; // waiting to hear whether it comes back
-      frame(Math.min(gap, 1 / 20));
-      frames++;
-      // check the first frame, the one after any change, and once more a second or two in
-      if (frames === checkAt || frames === 60) {
-        const problems = verify();
-        if (problems.length) trouble(problems);
-        if (failed) return;
-      }
-      probe(gap);
-      if (first && frames >= checkAt) {
+      this.#update(dt);
+      this.renderer.render(this.scene, this.camera);
+      this.frames = (this.frames || 0) + 1;
+      if (first) {
         first = false;
         onReady?.();
       }
+    });
+  }
+
+  get open() {
+    return this.state.open;
+  }
+
+  // what this browser's WebGL is, for ?debug
+  report() {
+    const gl = this.renderer.getContext();
+    const info = gl.getExtension('WEBGL_debug_renderer_info');
+    const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    return {
+      gpu: gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER),
+      drawn: `${size.x}x${size.y} at ${this.renderer.getPixelRatio()}x`,
+      frames: this.frames || 0,
     };
-    raf = requestAnimationFrame(tick);
-  };
-  // what this browser's WebGL turned out to be, for ?debug
-  api.report = () => ({
-    ...report,
-    tier,
-    pixelRatio: renderer.getPixelRatio(),
-    pose: pose && { yaw: pose.yaw, pitch: pose.pitch, lid: pose.lid, phase: st.phase },
-    smoothing: `${ceiling.value === 1 ? 'low-density: light capped' : 'as designed'}${pageAA ? ', page AA' : ''}, ${rodSamples.value} rays`,
-    size: `${rtPage.width}x${rtPage.height}`,
-    frames,
-  });
-  api.show = show;
-  api.setOpen = (on) => toggleOpen(on);
-  // Stop everything moving on its own: the disc, the drift and the show. Dragging still turns it.
-  api.setStill = (still) => {
-    st.still = still;
-  };
-  api.setPlaying = (playing) => {
-    st.playing = playing;
-  };
-  Object.defineProperty(api, 'open', { get: () => st.phase === 'opening' || st.phase === 'open' });
-  return api;
+  }
+
+  setOpen(open) {
+    this.state.open = open;
+  }
+
+  // Stop everything moving on its own: the disc, the drift. Dragging still turns it.
+  setStill(still) {
+    this.state.still = still;
+  }
+
+  // Put a disc in the case. `direction` 1 brings the next case down from above, -1 brings the
+  // previous one up from below, 0 just swaps the disc.
+  show(print, direction = 0) {
+    const s = this.state;
+    if (s.slide) this.#endSlide();
+    if (!direction || this.reducedMotion) {
+      this.current.dress(print);
+      return;
+    }
+    const next = this.cases.find((c) => c !== this.current);
+    next.dress(print);
+    next.lidAngle = 0;
+    next.lidVel = 0;
+    next.openAngle = 0;
+    next.group.visible = true;
+    s.slide = { t: 0, dir: direction, from: this.current, to: next };
+    this.current = next;
+  }
+
+  #endSlide() {
+    const { from, to } = this.state.slide;
+    from.group.visible = false;
+    for (const c of [from, to]) {
+      c.group.position.set(0, 0, 0);
+      c.group.rotation.set(0, 0, 0);
+    }
+    this.state.slide = null;
+  }
+
+  // Where each case is, t seconds into a change of song.
+  #slide(t) {
+    const { from, to, dir } = this.state.slide;
+    // the new one drops in, waits with its lower part showing above, then settles into place
+    // just in front, coming level as it lands
+    const arrive = easeOutBack(span(t, 0.58, 0.95));
+    to.group.position.set(
+      0,
+      dir * H * (1.5 - 0.6 * easeOut(span(t, 0, 0.2)) - 0.06 * span(t, 0.2, 0.6) - 0.84 * arrive),
+      24 * (1 - span(t, 0.8, 1)),
+    );
+    to.group.rotation.set(dir * 0.28 * (1 - easeOut(span(t, 0.55, 0.98))), 0, dir * 0.05 * (1 - arrive));
+    // the old one falls away backwards, top first, and out of sight
+    const fall = ease(span(t, 0.05, 0.65));
+    from.group.position.set(0, -dir * H * (0.85 * fall + 0.8 * easeIn(span(t, 0.65, 1))), -170 * ease(span(t, 0.05, 1)));
+    from.group.rotation.set(-dir * 0.55 * ease(span(t, 0.05, 0.85)), 0.15 * fall, -dir * 0.06 * fall);
+  }
+
+  #update(dt) {
+    const s = this.state;
+    this.time += dt;
+    this.onFrame?.(dt);
+
+    // each lid snaps open or shut on a spring; shut, it bounces off the base and settles
+    const k = this.reducedMotion ? 120 : 70;
+    const damping = 2 * Math.sqrt(k) * (this.reducedMotion ? 1 : 0.62);
+    for (const c of this.cases) {
+      if (!c.group.visible) continue;
+      const target = c === this.current && s.open ? OPEN : 0;
+      c.lidVel += (k * (target - c.lidAngle) - damping * c.lidVel) * dt;
+      c.lidAngle += c.lidVel * dt;
+      if (c.lidAngle < 0) {
+        c.lidAngle = 0;
+        c.lidVel *= -0.4;
+      }
+      c.openAngle = c.lidAngle;
+    }
+    // the framing follows the lid, a little behind it: once the lid has shut, the case slides
+    // back to the middle and comes closer
+    const spread = Math.max(0, -Math.cos(this.current.lidAngle)); // 0 shut, 1 lying open
+    this.view ??= { value: spread, vel: 0 };
+    if (this.reducedMotion) this.view.value = spread;
+    else follow(this.view, spread, spread > this.view.value ? 0.05 : 0.3, dt);
+    const framed = clamp(this.view.value, 0, 1);
+    this.frame.position.x = (W / 2) * framed;
+    this.#fit(framed);
+
+    // the disc winds up and down rather than jumping
+    const want = s.still ? 0 : SPIN;
+    s.spinSpeed += (want - s.spinSpeed) * (1 - Math.exp(-dt * 1.6));
+    s.disc -= s.spinSpeed * dt;
+    for (const c of this.cases) c.discAngle = s.disc;
+
+    // changing song
+    if (s.slide) {
+      s.slide.t += dt;
+      this.#slide(Math.min(s.slide.t, SLIDE));
+      if (s.slide.t >= SLIDE) this.#endSlide();
+    }
+
+    // let go, it always swings back face on: back the way it came, or on round if it was
+    // turned more than halfway; never left showing its back
+    s.idle = s.dragging ? 0 : s.idle + dt;
+    if (!s.dragging) {
+      const turn = Math.PI * 2;
+      const front = REST_YAW + Math.round((s.yaw + s.yawVel * 0.15 - REST_YAW) / turn) * turn;
+      s.yawVel += (26 * (front - s.yaw) - 7.4 * s.yawVel) * dt;
+      s.yaw += s.yawVel * dt;
+      s.pitchVel += (30 * (REST_PITCH - s.pitch) - 9 * s.pitchVel) * dt;
+      s.pitch += s.pitchVel * dt;
+    }
+
+    // and while it's left alone, it drifts a little
+    this.sway ??= 0;
+    const wantSway = this.reducedMotion || s.still ? 0 : THREE.MathUtils.smoothstep(s.idle, 0.5, 3);
+    this.sway += (wantSway - this.sway) * (1 - Math.exp(-dt * 2));
+    this.swayTime = (this.swayTime || 0) + dt * this.sway;
+    const swayYaw = Math.sin(this.swayTime * 0.5) * 0.06 * this.sway;
+    const swayPitch = Math.sin(this.swayTime * 0.73 + 1.3) * 0.03 * this.sway;
+
+    this.turn.rotation.set(s.pitch + swayPitch, s.yaw + swayYaw, REST_ROLL);
+  }
+
+  // Frame the case in the space the page leaves it: below the corner text, above the dock.
+  #fit(spread) {
+    const { width: vw, height: vh } = this.size;
+    const narrow = vw < 720;
+    const top = narrow ? 112 : 92;
+    const bottom = narrow ? 132 : 156;
+    const side = narrow ? 16 : 64;
+    const safeW = Math.max(vw - 2 * side, 120);
+    const safeH = Math.max(vh - top - bottom, 120);
+    const compW = W * (1 + spread) * 1.1;
+    const compH = H * 1.08;
+    const tan = Math.tan(THREE.MathUtils.degToRad(FOV / 2));
+    let dist = Math.max((compH * vh) / (safeH * 2 * tan), (compW * vh) / (safeW * 2 * tan));
+    dist = Math.max(dist, vh / (2 * tan * 3.4)); // no bigger than 3.4px a millimetre
+    // move the camera so the case sits in the middle of that space, not of the window
+    const mmPerPx = (2 * dist * tan) / vh;
+    this.camera.position.set(0, ((top - bottom) / 2) * mmPerPx, dist + 5);
+  }
+
+  #resize() {
+    const { clientWidth: w, clientHeight: h } = this.container;
+    if (!w || !h) return;
+    this.size = { width: w, height: h };
+    this.renderer.setSize(w, h, false);
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
+  }
+
+  #hit(e) {
+    const r = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    return ray.intersectObject(this.current.group, true).some((hit) => hit.object.isMesh);
+  }
+
+  #pointer() {
+    const el = this.renderer.domElement;
+    const s = this.state;
+    let drag = null;
+
+    el.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      this.onInteract?.();
+      el.setPointerCapture(e.pointerId);
+      drag = { id: e.pointerId, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t0: performance.now(), moved: false, trail: [] };
+      s.yawVel = 0;
+      s.pitchVel = 0;
+    });
+
+    el.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) {
+        if (e.pointerType === 'mouse') el.style.cursor = this.#hit(e) ? 'pointer' : 'grab';
+        return;
+      }
+      const dx = e.clientX - drag.x;
+      const dy = e.clientY - drag.y;
+      drag.x = e.clientX;
+      drag.y = e.clientY;
+      // a fingertip wanders further than a mouse while it taps
+      const slop = e.pointerType === 'mouse' ? 6 : 14;
+      if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) > slop) {
+        drag.moved = true;
+        s.dragging = true;
+        el.style.cursor = 'grabbing';
+      }
+      if (!drag.moved) return;
+      s.yaw += dx * DRAG_YAW;
+      s.pitch = clamp(s.pitch + dy * DRAG_PITCH, -0.75, 0.6);
+      const now = performance.now();
+      drag.trail.push({ t: now, x: e.clientX });
+      while (drag.trail.length && now - drag.trail[0].t > 90) drag.trail.shift();
+    });
+
+    const end = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      if (!drag.moved && e.type === 'pointerup' && performance.now() - drag.t0 < 600 && this.#hit(e)) {
+        this.onTap?.();
+      } else if (drag.moved && drag.trail.length > 1) {
+        // fling: carry on at the speed it was let go
+        const a = drag.trail[0];
+        const b = drag.trail[drag.trail.length - 1];
+        const v = (b.x - a.x) / Math.max(b.t - a.t, 1); // px per ms
+        s.yawVel = clamp(v * 1000 * DRAG_YAW, -9, 9);
+      }
+      s.dragging = false;
+      drag = null;
+      if (e.pointerType === 'mouse') el.style.cursor = this.#hit(e) ? 'pointer' : 'grab';
+    };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+  }
 }
