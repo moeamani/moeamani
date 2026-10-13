@@ -57,4 +57,5 @@ A plain static server (`python3 -m http.server`) shows the page too, but with no
 
 The CD case's model (the tray, the lid and the hinge) is **Ann Nguyen**'s ([@ann_nnng](https://x.com/ann_nnng)), from her [CD Case](https://github.com/annnguyentt/vibe-coding/tree/main/cd-case), vibe-coded with [TypingMind](https://typingmind.com). Her source is published for anyone to use with credit.
 
-- [`music/js/case-geometry.js`](music/js/case-geometry.js): her case geometry, unchanged. [`music/js/case.js`](music/js/case.js) puts it together with this page's own disc, and this page's renderer and plastics draw it.
+- [`music/js/case-geometry.js`](music/js/case-geometry.js): her case geometry, unchanged. [`music/js/case.js`](music/js/case.js) puts it together with this page's own disc.
+- [`music/js/shaders.js`](music/js/shaders.js): her studio and her rod and sheet shaders, which give the plastic its chrome. She drew the case in several passes, each rod refracting a picture of everything behind it; here the rods are solid and drawn in the page's single pass, a ray leaving a rod seeing her studio and the lit wall instead. [`music/js/glass.js`](music/js/glass.js) bakes the studio and makes the materials.

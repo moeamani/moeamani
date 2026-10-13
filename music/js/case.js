@@ -1,6 +1,6 @@
 import * as THREE from './three.js';
 import { discMaterial, setDisc } from './disc-material.js';
-import { plasticMaterial } from './plastic-material.js';
+import { rodMaterial, sheetMaterial } from './glass.js';
 import { sparkleGeometry, sparkleMaterial } from './sparkles.js';
 
 import { CASE, HINGE, lidGeometry, trayGeometry } from './case-geometry.js';
@@ -23,14 +23,14 @@ function build() {
   const tray = trayGeometry();
   const lid = lidGeometry();
   // her rods (rails, ribs, clips, the hub, the knuckles) and sheets (the floor, the lid's face, the
-  // clear middle of the disc), in this page's plastics
+  // clear middle of the disc), in her plastic
   const base = [
-    { geometry: tray.rods, kind: 'rail', x: 0, y: 0, z: 0, rz: 0 },
-    { geometry: tray.sheets, kind: 'clear', x: 0, y: 0, z: 0, rz: 0 },
+    { geometry: tray.rods, kind: 'rod', x: 0, y: 0, z: 0, rz: 0 },
+    { geometry: tray.sheets, kind: 'sheet', x: 0, y: 0, z: 0, rz: 0 },
   ];
   const lidParts = [
-    { geometry: lid.rods, kind: 'wall', x: 0, y: 0, z: 0, rz: 0 },
-    { geometry: lid.sheets, kind: 'clear', x: 0, y: 0, z: 0, rz: 0 },
+    { geometry: lid.rods, kind: 'rod', x: 0, y: 0, z: 0, rz: 0 },
+    { geometry: lid.sheets, kind: 'sheet', x: 0, y: 0, z: 0, rz: 0 },
   ];
 
   // where glints can catch: along the rails' tops, the lid's rim and the disc's edge
@@ -72,10 +72,9 @@ function build() {
     },
     glints: { base: sparkleGeometry(basePts, rand), lid: sparkleGeometry(lidPts, rand) },
     materials: {
-      clear: plasticMaterial({ tint: [0.86, 0.9, 0.95], density: 0.002 }),
-      // thick plastic seen end on goes grey, like the case's walls and the tray's rails
-      wall: plasticMaterial({ tint: [0.5, 0.52, 0.56], density: 0.03, chrome: 0.12, edge: 3 }),
-      rail: plasticMaterial({ tint: [0.42, 0.44, 0.48], density: 0.04, chrome: 0.3, edge: 3 }),
+      // a ray traced through each pixel of a rod, or two where the pointer is a mouse
+      rod: rodMaterial({ samples: matchMedia('(pointer: coarse)').matches ? 1 : 2 }),
+      sheet: sheetMaterial(),
       edge: new THREE.MeshStandardMaterial({ color: 0xe6e9ee, metalness: 1, roughness: 0.16, envMapIntensity: 1.5 }),
       glints: null,
     },

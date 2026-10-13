@@ -1,6 +1,7 @@
 import * as THREE from './three.js';
 import { JewelCase, W, H } from './case.js';
 import { studioEnvironment } from './studio.js';
+import { bakeStudio } from './glass.js';
 
 const FOV = 24;
 const OPEN = THREE.MathUtils.degToRad(176); // a lid lies back a little short of flat
@@ -76,6 +77,7 @@ export class Stage {
     this.frame = new THREE.Group();
     this.turn.add(this.frame);
     scene.add(this.turn);
+    bakeStudio(renderer); // the studio the case's plastic reflects and refracts
     this.cases = [new JewelCase(pixelRatio), new JewelCase(pixelRatio)];
     for (const c of this.cases) this.frame.add(c.group);
     this.cases[1].group.visible = false;
@@ -107,7 +109,7 @@ export class Stage {
     let last = performance.now();
     let first = true;
     this.renderer.setAnimationLoop((now) => {
-      const dt = Math.min((now - last) / 1000, 1 / 20);
+      const dt = Math.max(0, Math.min((now - last) / 1000, 1 / 20));
       last = now;
       this.#update(dt);
       this.renderer.render(this.scene, this.camera);
